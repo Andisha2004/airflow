@@ -344,3 +344,101 @@ class AthenaHook(AwsBaseHook):
         """
         self.log.info("Stopping Query with executionId - %s", query_execution_id)
         return self.get_conn().stop_query_execution(QueryExecutionId=query_execution_id)
+    
+        # --- Athena Spark (Calculations) API ---
+
+    def start_calculation(
+        self,
+        *,
+        code_block: str,
+        calculation_context: dict[str, Any] | None = None,
+        result_configuration: dict[str, Any] | None = None,
+        client_request_token: str | None = None,
+        workgroup: str = "primary",
+    ) -> str:
+        """
+        Start an Athena Spark calculation execution.
+
+        .. seealso::
+            - :external+boto3:py:meth:`Athena.Client.start_calculation_execution`
+
+        :param code_block: Spark code to execute (typically notebook-like code).
+        :param calculation_context: Optional calculation context for Athena (engine/session settings).
+        :param result_configuration: Optional output/encryption configuration.
+        :param client_request_token: Optional idempotency token.
+        :param workgroup: Athena workgroup name. Defaults to ``'primary'``.
+        :return: CalculationExecutionId
+        """
+        params: dict[str, Any] = {
+            "CodeBlock": code_block,
+            "WorkGroup": workgroup,
+        }
+        if calculation_context:
+            params["CalculationContext"] = calculation_context
+        if result_configuration:
+            params["ResultConfiguration"] = result_configuration
+        if client_request_token:
+            params["ClientRequestToken"] = client_request_token
+
+        if self.log_query:
+            self.log.info("Starting CalculationExecution with params:\n%s", query_params_to_string(params))
+        response = self.get_conn().start_calculation_execution(**params)
+        calc_execution_id = response["CalculationExecutionId"]
+        self.log.info("Calculation execution id: %s", calc_execution_id)
+        return calc_execution_id
+
+    def get_calculation_info(self, calculation_execution_id: str, use_cache: bool = False) -> dict[str, Any]:
+        """
+        Get information about a single execution of a calculation.
+
+        .. seealso::
+            - :external+boto3:py:meth:`Athena.Client.get_calculation_execution`
+
+        :param calculation_execution_id: CalculationExecutionId returned by start_calculation_execution
+        :param use_cache: If True, use execution information cache
+        """
+        cache_key = f"calc:{calculation_execution_id}"
+        if use_cache and cache_key in self.__query_results:
+            return self.__query_results[cache_key]
+
+        response = self.get_conn().get_calculation_execution(CalculationExecutionId=calculation_execution_id)
+
+        if use_cache:
+            self.__query_results[cache_key] = response
+        return response
+
+    def check_calculation_status(self, calculation_execution_id: str, use_cache: bool = False) -> str | None:
+        """
+        Fetch the state of a submitted calculation execution.
+
+        .. seealso::
+            - :external+boto3:py:meth:`Athena.Client.get_calculation_execution`
+
+        :param calculation_execution_id: CalculationExecutionId returned by start_calculation_execution
+        :return: One of valid calculation states, or *None* if the response is malformed.
+        """
+        response = self.get_calculation_info(calculation_execution_id=calculation_execution_id, use_cache=use_cache)
+
+        state = None
+        try:
+            state = response["CalculationExecution"]["Status"]["State"]
+        except Exception as e:
+            # Keep consistent behavior with SQL methods: swallow and log for retry callers.
+            self.log.exception(
+                "Exception while getting calculation state. Calculation execution id: %s, Exception: %s",
+                calculation_execution_id,
+                e,
+            )
+        return state
+
+    def stop_calculation(self, calculation_execution_id: str) -> dict[str, Any]:
+        """
+        Cancel the submitted calculation execution.
+
+        .. seealso::
+            - :external+boto3:py:meth:`Athena.Client.stop_calculation_execution`
+
+        :param calculation_execution_id: CalculationExecutionId returned by start_calculation_execution
+        """
+        self.log.info("Stopping CalculationExecution with id - %s", calculation_execution_id)
+        return self.get_conn().stop_calculation_execution(CalculationExecutionId=calculation_execution_id)
