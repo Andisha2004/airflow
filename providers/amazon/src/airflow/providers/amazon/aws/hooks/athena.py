@@ -350,11 +350,11 @@ class AthenaHook(AwsBaseHook):
     def start_calculation(
         self,
         *,
+        session_id: str,
         code_block: str,
-        calculation_context: dict[str, Any] | None = None,
-        result_configuration: dict[str, Any] | None = None,
+        description: str | None = None,
+        calculation_configuration: dict[str, Any] | None = None, 
         client_request_token: str | None = None,
-        workgroup: str = "primary",
     ) -> str:
         """
         Start an Athena Spark calculation execution.
@@ -362,21 +362,26 @@ class AthenaHook(AwsBaseHook):
         .. seealso::
             - :external+boto3:py:meth:`Athena.Client.start_calculation_execution`
 
+        :param session_id: The Athena session ID. #change
         :param code_block: Spark code to execute (typically notebook-like code).
-        :param calculation_context: Optional calculation context for Athena (engine/session settings).
-        :param result_configuration: Optional output/encryption configuration.
+        :param description: Optional description of the calculation. #change
+        # COMMENTED OUT: :param calculation_context: Optional calculation context for Athena (engine/session settings).
+        # COMMENTED OUT: :param result_configuration: Optional output/encryption configuration.
+        # COMMENTED OUT: :param workgroup: Athena workgroup name. Defaults to ``'primary'``.
+        :param calculation_configuration: Contains configuration information for the calculation. #change
         :param client_request_token: Optional idempotency token.
-        :param workgroup: Athena workgroup name. Defaults to ``'primary'``.
         :return: CalculationExecutionId
         """
         params: dict[str, Any] = {
+            "SessionId": session_id,
             "CodeBlock": code_block,
-            "WorkGroup": workgroup,
         }
-        if calculation_context:
-            params["CalculationContext"] = calculation_context
-        if result_configuration:
-            params["ResultConfiguration"] = result_configuration
+        if description:
+            params["Description"] = description
+        
+        if calculation_configuration:
+            params["CalculationConfiguration"] = calculation_configuration 
+            
         if client_request_token:
             params["ClientRequestToken"] = client_request_token
 
