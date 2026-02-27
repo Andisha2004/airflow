@@ -14,11 +14,20 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+"""
+Unit tests for AthenaHook with boto3 client mocked.
+
+Test strategy:
+- Mock the boto3 client via AthenaHook.get_conn() so no real AWS calls are made.
+- Cover success, failure (exceptions), and bad/edge-case input for each hook method.
+- Use botocore.exceptions.ClientError for API failure scenarios.
+"""
 from __future__ import annotations
 
 from unittest import mock
 
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from airflow.providers.amazon.aws.hooks.athena import (
@@ -103,6 +112,21 @@ class TestAthenaHook:
         mock_conn.return_value.start_query_execution.assert_called_with(**expected_call_params)
         assert result == MOCK_DATA["query_execution_id"]
 
+    @mock.patch.object(AthenaHook, "get_conn")
+    def test_hook_run_query_boto3_failure(self, mock_conn):
+        """Failure case: boto3 start_query_execution raises ClientError."""
+        mock_conn.return_value.start_query_execution.side_effect = ClientError(
+            error_response={"Error": {"Code": "InvalidRequestException", "Message": "Invalid query"}},
+            operation_name="start_query_execution",
+        )
+        with pytest.raises(ClientError) as exc_info:
+            self.athena.run_query(
+                query=MOCK_DATA["query"],
+                query_context=mock_query_context,
+                result_configuration=mock_result_configuration,
+            )
+        assert exc_info.value.response["Error"]["Code"] == "InvalidRequestException"
+
     @mock.patch.object(AthenaHook, "log")
     @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_run_query_log_query(self, mock_conn, log):
@@ -166,6 +190,24 @@ class TestAthenaHook:
         mock_conn.return_value.get_query_results.assert_called_with(**expected_call_params)
 
     @mock.patch.object(AthenaHook, "get_conn")
+    def test_hook_get_query_results_invalid_state_returns_none(self, mock_conn):
+        """Edge case: get_query_execution returns malformed response; check_query_status returns None."""
+        mock_conn.return_value.get_query_execution.return_value = {"QueryExecution": {}}
+        result = self.athena.get_query_results(query_execution_id=MOCK_DATA["query_execution_id"])
+        assert result is None
+        mock_conn.return_value.get_query_results.assert_not_called()
+
+    @mock.patch.object(AthenaHook, "get_conn")
+    def test_hook_get_query_info_boto3_failure(self, mock_conn):
+        """Failure case: boto3 get_query_execution raises ClientError."""
+        mock_conn.return_value.get_query_execution.side_effect = ClientError(
+            error_response={"Error": {"Code": "InvalidRequestException"}},
+            operation_name="get_query_execution",
+        )
+        with pytest.raises(ClientError):
+            self.athena.get_query_info(query_execution_id=MOCK_DATA["query_execution_id"])
+
+    @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_get_paginator_with_non_succeeded_query(self, mock_conn):
         mock_conn.return_value.get_query_execution.return_value = MOCK_RUNNING_QUERY_EXECUTION
         result = self.athena.get_query_results_paginator(query_execution_id=MOCK_DATA["query_execution_id"])
@@ -180,6 +222,14 @@ class TestAthenaHook:
             "PaginationConfig": {"MaxItems": None, "PageSize": None, "StartingToken": None},
         }
         mock_conn.return_value.get_paginator.return_value.paginate.assert_called_with(**expected_call_params)
+
+    @mock.patch.object(AthenaHook, "get_conn")
+    def test_hook_get_paginator_invalid_state_returns_none(self, mock_conn):
+        """Edge case: malformed response leads to None state; paginator not created."""
+        mock_conn.return_value.get_query_execution.return_value = {"QueryExecution": {}}
+        result = self.athena.get_query_results_paginator(query_execution_id=MOCK_DATA["query_execution_id"])
+        assert result is None
+        mock_conn.return_value.get_paginator.assert_not_called()
 
     @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_get_paginator_with_pagination_config(self, mock_conn):
@@ -233,6 +283,27 @@ class TestAthenaHook:
         result = self.athena.get_output_location(query_execution_id=MOCK_DATA["query_execution_id"])
         assert result == "s3://test_bucket/test.csv"
 
+    @mock.patch.object(AthenaHook, "get_conn")
+    def test_hook_stop_query_success(self, mock_conn):
+        """Success case: stop_query_execution returns normally."""
+        mock_conn.return_value.stop_query_execution.return_value = {}
+        result = self.athena.stop_query(query_execution_id=MOCK_DATA["query_execution_id"])
+        mock_conn.return_value.stop_query_execution.assert_called_once_with(
+            QueryExecutionId=MOCK_DATA["query_execution_id"]
+        )
+        assert result == {}
+
+    @mock.patch.object(AthenaHook, "get_conn")
+    def test_hook_stop_query_boto3_failure(self, mock_conn):
+        """Failure case: boto3 stop_query_execution raises ClientError."""
+        mock_conn.return_value.stop_query_execution.side_effect = ClientError(
+            error_response={"Error": {"Code": "InvalidRequestException", "Message": "Query already finished"}},
+            operation_name="stop_query_execution",
+        )
+        with pytest.raises(ClientError) as exc_info:
+            self.athena.stop_query(query_execution_id=MOCK_DATA["query_execution_id"])
+        assert exc_info.value.response["Error"]["Code"] == "InvalidRequestException"
+
     @pytest.mark.parametrize(
         "query_execution_id", [pytest.param("", id="empty-string"), pytest.param(None, id="none")]
     )
@@ -267,6 +338,13 @@ class TestAthenaHook:
         mock_get_query_info.return_value = MOCK_QUERY_EXECUTION_OUTPUT
         state = self.athena.check_query_status(query_execution_id=MOCK_DATA["query_execution_id"])
         assert not state
+
+    @mock.patch.object(AthenaHook, "get_query_info")
+    def test_get_state_change_reason_missing_key_returns_none(self, mock_get_query_info):
+        """Edge case: response has no StateChangeReason; hook returns None and logs."""
+        mock_get_query_info.return_value = {"QueryExecution": {"Status": {}}}
+        result = self.athena.get_state_change_reason(query_execution_id=MOCK_DATA["query_execution_id"])
+        assert result is None
 
     @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_get_query_info_caching(self, mock_conn):
