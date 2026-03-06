@@ -41,6 +41,8 @@ MOCK_DATA = {
     "next_token_id": "eac427d0-1c6d-4dfb-96aa-2835d3ac6595",
     "max_items": 1000,
     "code_block": "print('hello spark')",
+    "session_id": "session-123",
+    "description": "test spark calc",
     "calculation_execution_id": "calc-123456",
 }
 
@@ -62,7 +64,10 @@ MOCK_QUERY_EXECUTION_OUTPUT = {
 MOCK_CALCULATION_EXECUTION = {"CalculationExecutionId": MOCK_DATA["calculation_execution_id"]}
 
 MOCK_RUNNING_CALC_EXECUTION = {"CalculationExecution": {"Status": {"State": "RUNNING"}}}
-MOCK_SUCCEEDED_CALC_EXECUTION = {"CalculationExecution": {"Status": {"State": "SUCCEEDED"}}}
+MOCK_SUCCEEDED_CALC_EXECUTION = {"CalculationExecution": {"Status": {"State": "COMPLETED"}}}
+MOCK_FAILED_CALC_EXECUTION = {
+    "CalculationExecution": {"Status": {"State": "FAILED", "StateChangeReason": "Spark executor OOM"}}
+}
 
 
 @mock_aws
@@ -145,14 +150,19 @@ class TestAthenaHook:
         assert call_kw["sql"] == MOCK_DATA["query"]
         assert call_kw["job_id"] == MOCK_DATA["query_execution_id"]
 
-    # new test cases 
+    # new test cases
     @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_start_calculation_default_params(self, mock_conn):
         mock_conn.return_value.start_calculation_execution.return_value = MOCK_CALCULATION_EXECUTION
 
-        result = self.athena.start_calculation(code_block=MOCK_DATA["code_block"])
+        result = self.athena.start_calculation_execution(
+            session_id=MOCK_DATA["session_id"],
+            code_block=MOCK_DATA["code_block"],
+            workgroup=MOCK_DATA["workgroup"],
+        )
 
         expected_call_params = {
+            "SessionId": MOCK_DATA["session_id"],
             "CodeBlock": MOCK_DATA["code_block"],
             "WorkGroup": MOCK_DATA["workgroup"],
         }
@@ -163,23 +173,24 @@ class TestAthenaHook:
     def test_hook_start_calculation_with_optional_params(self, mock_conn):
         mock_conn.return_value.start_calculation_execution.return_value = MOCK_CALCULATION_EXECUTION
 
-        calculation_context = {"Database": MOCK_DATA["database"]}
-        result_configuration = {"OutputLocation": MOCK_DATA["output_location"]}
+        calculation_configuration = {"ResultS3Uri": MOCK_DATA["output_location"]}
 
-        result = self.athena.start_calculation(
+        result = self.athena.start_calculation_execution(
+            session_id=MOCK_DATA["session_id"],
             code_block=MOCK_DATA["code_block"],
-            calculation_context=calculation_context,
-            result_configuration=result_configuration,
-            client_request_token=MOCK_DATA["client_request_token"],
             workgroup=MOCK_DATA["workgroup"],
+            description=MOCK_DATA["description"],
+            calculation_configuration=calculation_configuration,
+            client_request_token=MOCK_DATA["client_request_token"],
         )
 
         expected_call_params = {
+            "SessionId": MOCK_DATA["session_id"],
             "CodeBlock": MOCK_DATA["code_block"],
-            "CalculationContext": calculation_context,
-            "ResultConfiguration": result_configuration,
-            "ClientRequestToken": MOCK_DATA["client_request_token"],
             "WorkGroup": MOCK_DATA["workgroup"],
+            "Description": MOCK_DATA["description"],
+            "CalculationConfiguration": calculation_configuration,
+            "ClientRequestToken": MOCK_DATA["client_request_token"],
         }
         mock_conn.return_value.start_calculation_execution.assert_called_with(**expected_call_params)
         assert result == MOCK_DATA["calculation_execution_id"]
@@ -188,7 +199,9 @@ class TestAthenaHook:
     def test_hook_get_calculation_info(self, mock_conn):
         mock_conn.return_value.get_calculation_execution.return_value = MOCK_SUCCEEDED_CALC_EXECUTION
 
-        result = self.athena.get_calculation_info(calculation_execution_id=MOCK_DATA["calculation_execution_id"])
+        result = self.athena.get_calculation_execution(
+            calculation_execution_id=MOCK_DATA["calculation_execution_id"]
+        )
 
         mock_conn.return_value.get_calculation_execution.assert_called_once_with(
             CalculationExecutionId=MOCK_DATA["calculation_execution_id"]
@@ -205,11 +218,21 @@ class TestAthenaHook:
 
     @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_stop_calculation(self, mock_conn):
-        self.athena.stop_calculation(calculation_execution_id=MOCK_DATA["calculation_execution_id"])
+        self.athena.stop_calculation_execution(calculation_execution_id=MOCK_DATA["calculation_execution_id"])
 
         mock_conn.return_value.stop_calculation_execution.assert_called_once_with(
             CalculationExecutionId=MOCK_DATA["calculation_execution_id"]
         )
+
+    @mock.patch.object(AthenaHook, "get_conn")
+    def test_get_calculation_state_change_reason(self, mock_conn):
+        mock_conn.return_value.get_calculation_execution.return_value = MOCK_FAILED_CALC_EXECUTION
+
+        reason = self.athena.get_calculation_state_change_reason(
+            calculation_execution_id=MOCK_DATA["calculation_execution_id"]
+        )
+
+        assert reason == "Spark executor OOM"
 
     @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_get_query_results_with_non_succeeded_query(self, mock_conn):

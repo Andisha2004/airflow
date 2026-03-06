@@ -40,7 +40,7 @@ class AthenaSparkSensor(BaseSensorOperator):
 
         self.log.info("Calculation %s state is: %s", self.calculation_execution_id, state)
 
-        if state in hook.SPARK_FAILURE_STATES:
+        if state in hook.CALCULATION_FAILURE_STATES:
             raise AirflowException(
                 f"Calculation {self.calculation_execution_id} failed with state: {state}"
             )

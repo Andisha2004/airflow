@@ -85,6 +85,23 @@ class AthenaHook(AwsBaseHook):
         "FAILED",
         "CANCELLED",
     )
+    CALCULATION_INTERMEDIATE_STATES = (
+        "CREATING",
+        "CREATED",
+        "QUEUED",
+        "RUNNING",
+        "CANCELLING",
+    )
+    CALCULATION_FAILURE_STATES = (
+        "FAILED",
+        "CANCELLED",
+    )
+    CALCULATION_SUCCESS_STATES = ("COMPLETED",)
+    CALCULATION_TERMINAL_STATES = (
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+    )
 
     def __init__(self, *args: Any, log_query: bool = True, **kwargs: Any) -> None:
         super().__init__(client_type="athena", *args, **kwargs)  # type: ignore
@@ -344,16 +361,16 @@ class AthenaHook(AwsBaseHook):
         """
         self.log.info("Stopping Query with executionId - %s", query_execution_id)
         return self.get_conn().stop_query_execution(QueryExecutionId=query_execution_id)
-    
-        # --- Athena Spark (Calculations) API ---
+    # --- Athena Spark (Calculations) API ---
 
-    def start_calculation(
+    def start_calculation_execution(
         self,
         *,
         session_id: str,
         code_block: str,
+        workgroup: str | None = None,
         description: str | None = None,
-        calculation_configuration: dict[str, Any] | None = None, 
+        calculation_configuration: dict[str, Any] | None = None,
         client_request_token: str | None = None,
     ) -> str:
         """
@@ -362,13 +379,11 @@ class AthenaHook(AwsBaseHook):
         .. seealso::
             - :external+boto3:py:meth:`Athena.Client.start_calculation_execution`
 
-        :param session_id: The Athena session ID. #change
+        :param session_id: The Athena session ID.
         :param code_block: Spark code to execute (typically notebook-like code).
-        :param description: Optional description of the calculation. #change
-        # COMMENTED OUT: :param calculation_context: Optional calculation context for Athena (engine/session settings).
-        # COMMENTED OUT: :param result_configuration: Optional output/encryption configuration.
-        # COMMENTED OUT: :param workgroup: Athena workgroup name. Defaults to ``'primary'``.
-        :param calculation_configuration: Contains configuration information for the calculation. #change
+        :param workgroup: Athena workgroup name.
+        :param description: Optional description of the calculation.
+        :param calculation_configuration: Contains configuration information for the calculation.
         :param client_request_token: Optional idempotency token.
         :return: CalculationExecutionId
         """
@@ -378,10 +393,12 @@ class AthenaHook(AwsBaseHook):
         }
         if description:
             params["Description"] = description
-        
+
+        if workgroup:
+            params["WorkGroup"] = workgroup
         if calculation_configuration:
-            params["CalculationConfiguration"] = calculation_configuration 
-            
+            params["CalculationConfiguration"] = calculation_configuration
+
         if client_request_token:
             params["ClientRequestToken"] = client_request_token
 
@@ -392,7 +409,9 @@ class AthenaHook(AwsBaseHook):
         self.log.info("Calculation execution id: %s", calc_execution_id)
         return calc_execution_id
 
-    def get_calculation_info(self, calculation_execution_id: str, use_cache: bool = False) -> dict[str, Any]:
+    def get_calculation_execution(
+        self, calculation_execution_id: str, use_cache: bool = False
+    ) -> dict[str, Any]:
         """
         Get information about a single execution of a calculation.
 
@@ -422,7 +441,9 @@ class AthenaHook(AwsBaseHook):
         :param calculation_execution_id: CalculationExecutionId returned by start_calculation_execution
         :return: One of valid calculation states, or *None* if the response is malformed.
         """
-        response = self.get_calculation_info(calculation_execution_id=calculation_execution_id, use_cache=use_cache)
+        response = self.get_calculation_execution(
+            calculation_execution_id=calculation_execution_id, use_cache=use_cache
+        )
 
         state = None
         try:
@@ -436,7 +457,32 @@ class AthenaHook(AwsBaseHook):
             )
         return state
 
-    def stop_calculation(self, calculation_execution_id: str) -> dict[str, Any]:
+    def get_calculation_state_change_reason(
+        self, calculation_execution_id: str, use_cache: bool = False
+    ) -> str | None:
+        """
+        Fetch the reason for a calculation state change (e.g. error message).
+
+        .. seealso::
+            - :external+boto3:py:meth:`Athena.Client.get_calculation_execution`
+
+        :param calculation_execution_id: CalculationExecutionId returned by start_calculation_execution
+        """
+        response = self.get_calculation_execution(
+            calculation_execution_id=calculation_execution_id, use_cache=use_cache
+        )
+        reason = None
+        try:
+            reason = response["CalculationExecution"]["Status"]["StateChangeReason"]
+        except Exception as e:
+            self.log.exception(
+                "Exception while getting calculation state change reason. Calculation execution id: %s, Exception: %s",
+                calculation_execution_id,
+                e,
+            )
+        return reason
+
+    def stop_calculation_execution(self, calculation_execution_id: str) -> dict[str, Any]:
         """
         Cancel the submitted calculation execution.
 
@@ -447,3 +493,15 @@ class AthenaHook(AwsBaseHook):
         """
         self.log.info("Stopping CalculationExecution with id - %s", calculation_execution_id)
         return self.get_conn().stop_calculation_execution(CalculationExecutionId=calculation_execution_id)
+
+    # Compatibility wrappers while Spark API support evolves.
+    def start_calculation(self, **kwargs: Any) -> str:
+        return self.start_calculation_execution(**kwargs)
+
+    def get_calculation_info(self, calculation_execution_id: str, use_cache: bool = False) -> dict[str, Any]:
+        return self.get_calculation_execution(
+            calculation_execution_id=calculation_execution_id, use_cache=use_cache
+        )
+
+    def stop_calculation(self, calculation_execution_id: str) -> dict[str, Any]:
+        return self.stop_calculation_execution(calculation_execution_id=calculation_execution_id)
