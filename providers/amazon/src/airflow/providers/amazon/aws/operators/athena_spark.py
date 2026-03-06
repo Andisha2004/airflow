@@ -32,12 +32,12 @@ from airflow.providers.common.compat.sdk import AirflowException
 if TYPE_CHECKING:
     from airflow.sdk import Context
 
-# XCom keys for metadata (aligned with Jack's schema)
-XCOM_KEY_CALCULATION_EXECUTION_ID = "calculation_execution_id"
-XCOM_KEY_FINAL_STATE = "final_state"
-XCOM_KEY_STATE_CHANGE_REASON = "state_change_reason"
-XCOM_KEY_SUBMISSION_TIME = "submission_time"
-XCOM_KEY_COMPLETION_TIME = "completion_time"
+# Metadata keys returned by execute(); XCom schema is owned by Jack + Andisha (Task 8/9).
+METADATA_KEY_CALCULATION_EXECUTION_ID = "calculation_execution_id"
+METADATA_KEY_FINAL_STATE = "final_state"
+METADATA_KEY_STATE_CHANGE_REASON = "state_change_reason"
+METADATA_KEY_SUBMISSION_TIME = "submission_time"
+METADATA_KEY_COMPLETION_TIME = "completion_time"
 
 
 class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
@@ -46,7 +46,7 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
 
     Submits a calculation (e.g. PySpark code) via the Athena API, polls until
     the calculation reaches a terminal state (COMPLETED, FAILED, or CANCELED),
-    and pushes execution metadata to XCom.
+    Returns execution metadata (XCom push is implemented by Jack per Task 9).
 
     .. seealso::
         - :class:`airflow.providers.amazon.aws.hooks.athena.AthenaHook`
@@ -113,20 +113,21 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
         """Submit the Spark calculation, poll until terminal state, then return and push metadata."""
         self.log.info("Starting Athena Spark calculation in session %s", self.session_id)
 
-        calculation_execution_id, initial_state = self.hook.start_calculation_execution(
+        calculation_execution_id = self.hook.start_calculation(
             session_id=self.session_id,
             code_block=self.code_block,
             description=self.description,
             client_request_token=self.client_request_token,
         )
         self._calculation_execution_id = calculation_execution_id
+        initial_state = self.hook.check_calculation_status(calculation_execution_id)
         self.log.info(
             "Calculation submitted. CalculationExecutionId: %s, initial state: %s",
             calculation_execution_id,
             initial_state,
         )
 
-        if initial_state in AthenaHook.SPARK_TERMINAL_STATES:
+        if initial_state and initial_state in AthenaHook.SPARK_TERMINAL_STATES:
             return self._handle_terminal_state(
                 context,
                 calculation_execution_id,
@@ -145,7 +146,7 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
         for attempt in range(1, self.max_polling_attempts + 1):
             if attempt > 1:
                 time.sleep(self.poll_interval)
-            state = self.hook.get_calculation_execution_status(calculation_execution_id)
+            state = self.hook.check_calculation_status(calculation_execution_id)
 
             if state is None:
                 raise AirflowException(
@@ -177,17 +178,18 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
     ) -> dict[str, Any]:
         """Resolve terminal state: raise on failure/cancel, build metadata and push to XCom."""
         reason = self.hook.get_calculation_state_change_reason(calculation_execution_id)
-        execution_info = self.hook.get_calculation_execution(calculation_execution_id)
-        status = execution_info.get("Status") or {}
+        execution_info = self.hook.get_calculation_info(calculation_execution_id)
+        calc_exec = execution_info.get("CalculationExecution") or {}
+        status = calc_exec.get("Status") or {}
         submission_time = status.get("SubmissionDateTime")
         completion_time = status.get("CompletionDateTime")
 
         metadata = {
-            XCOM_KEY_CALCULATION_EXECUTION_ID: calculation_execution_id,
-            XCOM_KEY_FINAL_STATE: state,
-            XCOM_KEY_STATE_CHANGE_REASON: reason,
-            XCOM_KEY_SUBMISSION_TIME: str(submission_time) if submission_time else None,
-            XCOM_KEY_COMPLETION_TIME: str(completion_time) if completion_time else None,
+            METADATA_KEY_CALCULATION_EXECUTION_ID: calculation_execution_id,
+            METADATA_KEY_FINAL_STATE: state,
+            METADATA_KEY_STATE_CHANGE_REASON: reason,
+            METADATA_KEY_SUBMISSION_TIME: str(submission_time) if submission_time else None,
+            METADATA_KEY_COMPLETION_TIME: str(completion_time) if completion_time else None,
         }
 
         if state in AthenaHook.SPARK_FAILURE_STATES:
@@ -223,9 +225,11 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
     def on_kill(self) -> None:
         """Request cancellation of the calculation when the task is killed."""
         if self._calculation_execution_id:
-            self.log.info("Received kill signal; stopping calculation %s", self._calculation_execution_id)
+            self.log.info(
+                "Received kill signal; stopping calculation %s", self._calculation_execution_id
+            )
             try:
-                self.hook.stop_calculation_execution(self._calculation_execution_id)
+                self.hook.stop_calculation(self._calculation_execution_id)
             except Exception as e:
                 self.log.warning(
                     "Failed to stop calculation %s: %s",
