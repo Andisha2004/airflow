@@ -46,7 +46,7 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
 
     Submits a calculation (e.g. PySpark code) via the Athena API, polls until
     the calculation reaches a terminal state (COMPLETED, FAILED, or CANCELED),
-    Returns execution metadata (XCom push is implemented by Jack per Task 9).
+    and returns execution metadata (XCom push is Jack's responsibility per Task 9).
 
     .. seealso::
         - :class:`airflow.providers.amazon.aws.hooks.athena.AthenaHook`
@@ -110,7 +110,7 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
         return {**super()._hook_parameters, "log_query": self.log_query}
 
     def execute(self, context: Context) -> dict[str, Any]:
-        """Submit the Spark calculation, poll until terminal state, then return and push metadata."""
+        """Submit the Spark calculation, poll until terminal state, then return metadata."""
         self.log.info("Starting Athena Spark calculation in session %s", self.session_id)
 
         calculation_execution_id = self.hook.start_calculation(
@@ -176,11 +176,15 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
         calculation_execution_id: str,
         state: str,
     ) -> dict[str, Any]:
-        """Resolve terminal state: raise on failure/cancel, build metadata and push to XCom."""
+        """Resolve terminal state: raise on failure/cancel, build and return metadata."""
         reason = self.hook.get_calculation_state_change_reason(calculation_execution_id)
         execution_info = self.hook.get_calculation_info(calculation_execution_id)
-        calc_exec = execution_info.get("CalculationExecution") or {}
-        status = calc_exec.get("Status") or {}
+        # Support both top-level Status and nested CalculationExecution.Status (API shape can vary)
+        status = (
+            execution_info.get("Status")
+            or (execution_info.get("CalculationExecution") or {}).get("Status")
+            or {}
+        )
         submission_time = status.get("SubmissionDateTime")
         completion_time = status.get("CompletionDateTime")
 
@@ -216,10 +220,7 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
             calculation_execution_id,
         )
 
-        if self.do_xcom_push and context.get("ti"):
-            for key, value in metadata.items():
-                context["ti"].xcom_push(key=key, value=value)
-
+        # Return metadata; XCom push is Jack's responsibility (Task 9).
         return metadata
 
     def on_kill(self) -> None:
