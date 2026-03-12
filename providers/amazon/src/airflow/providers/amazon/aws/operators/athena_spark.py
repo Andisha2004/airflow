@@ -21,6 +21,7 @@ class AthenaSparkOperator(BaseOperator):
     :param wait_for_completion: Whether to wait for the job to finish before exiting.
     :param poll_interval: Time (in seconds) to wait between status checks.
     :param aws_conn_id: The Airflow connection used for AWS credentials.
+    :param region_name: AWS region where the Athena Workgroup resides.
     """
 
     template_fields: Sequence[str] = ("session_id", "code_block")
@@ -34,6 +35,7 @@ class AthenaSparkOperator(BaseOperator):
         wait_for_completion: bool = True,
         poll_interval: int = 15,
         aws_conn_id: str = "aws_default",
+        region_name: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -42,12 +44,13 @@ class AthenaSparkOperator(BaseOperator):
         self.wait_for_completion = wait_for_completion
         self.poll_interval = poll_interval
         self.aws_conn_id = aws_conn_id
+        self.region_name = region_name
         self.calculation_execution_id: str | None = None
 
     def execute(self, context: Context) -> str:
-        hook = AthenaHook(aws_conn_id=self.aws_conn_id)
+        hook = AthenaHook(aws_conn_id=self.aws_conn_id, region_name=self.region_name)
         
-        self.calculation_execution_id = hook.start_calculation_execution(
+        self.calculation_execution_id = hook.start_calculation(
             session_id=self.session_id,
             code_block=self.code_block,
         )
@@ -55,13 +58,16 @@ class AthenaSparkOperator(BaseOperator):
         if not self.wait_for_completion:
             return self.calculation_execution_id
 
+        terminal_states = ("COMPLETED", "FAILED", "CANCELED")
+        failure_states = ("FAILED", "CANCELED")
+
         self.log.info("Polling for calculation completion...")
         while True:
             status = hook.check_calculation_status(self.calculation_execution_id)
             self.log.info("Current calculation state is: %s", status)
 
-            if status in hook.SPARK_TERMINAL_STATES:
-                if status in hook.SPARK_FAILURE_STATES:
+            if status in terminal_states:
+                if status in failure_states:
                     raise AirflowException(
                         f"Athena Spark job failed or was canceled. Final state: {status}"
                     )
@@ -70,12 +76,11 @@ class AthenaSparkOperator(BaseOperator):
             
             time.sleep(self.poll_interval)
 
-        # Implicitly pushed to XCom by returning the value
         return self.calculation_execution_id
 
     def on_kill(self) -> None:
         """Cancels the calculation if the Airflow task is killed."""
         if self.calculation_execution_id:
             self.log.info("Task killed. Canceling Athena Spark job.")
-            hook = AthenaHook(aws_conn_id=self.aws_conn_id)
-            hook.stop_calculation_execution(self.calculation_execution_id)
+            hook = AthenaHook(aws_conn_id=self.aws_conn_id, region_name=self.region_name)
+            hook.stop_calculation(self.calculation_execution_id)

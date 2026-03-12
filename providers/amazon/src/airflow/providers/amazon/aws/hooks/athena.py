@@ -412,29 +412,38 @@ class AthenaHook(AwsBaseHook):
             self.__query_results[cache_key] = response
         return response
 
-    def check_calculation_status(self, calculation_execution_id: str, use_cache: bool = False) -> str | None:
-        """
-        Fetch the state of a submitted calculation execution.
+    # def check_calculation_status(self, calculation_execution_id: str, use_cache: bool = False) -> str | None:
+    #     """
+    #     Fetch the state of a submitted calculation execution.
 
-        .. seealso::
-            - :external+boto3:py:meth:`Athena.Client.get_calculation_execution`
+    #     .. seealso::
+    #         - :external+boto3:py:meth:`Athena.Client.get_calculation_execution`
 
-        :param calculation_execution_id: CalculationExecutionId returned by start_calculation_execution
-        :return: One of valid calculation states, or *None* if the response is malformed.
-        """
-        response = self.get_calculation_info(calculation_execution_id=calculation_execution_id, use_cache=use_cache)
+    #     :param calculation_execution_id: CalculationExecutionId returned by start_calculation_execution
+    #     :return: One of valid calculation states, or *None* if the response is malformed.
+    #     """
+    #     response = self.get_calculation_info(calculation_execution_id=calculation_execution_id, use_cache=use_cache)
 
-        state = None
+    #     state = None
+    #     try:
+    #         state = response["CalculationExecution"]["Status"]["State"]
+    #     except Exception as e:
+    #         # Keep consistent behavior with SQL methods: swallow and log for retry callers.
+    #         self.log.exception(
+    #             "Exception while getting calculation state. Calculation execution id: %s, Exception: %s",
+    #             calculation_execution_id,
+    #             e,
+    #         )
+    #     return state
+    def check_calculation_status(self, calculation_execution_id: str) -> str | None:
+        """Fetches the state of a submitted calculation execution."""
+        # CHANGED: Use the correct method name (get_calculation_info)
+        response = self.get_calculation_info(calculation_execution_id)
         try:
-            state = response["CalculationExecution"]["Status"]["State"]
-        except Exception as e:
-            # Keep consistent behavior with SQL methods: swallow and log for retry callers.
-            self.log.exception(
-                "Exception while getting calculation state. Calculation execution id: %s, Exception: %s",
-                calculation_execution_id,
-                e,
-            )
-        return state
+            return response["Status"]["State"]
+        except KeyError:
+            self.log.error("Could not parse status for calculation %s", calculation_execution_id)
+            return None
 
     def stop_calculation(self, calculation_execution_id: str) -> dict[str, Any]:
         """
