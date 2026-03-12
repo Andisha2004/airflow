@@ -451,15 +451,10 @@ class AthenaHook(AwsBaseHook):
 
         state = None
         try:
-            state = response["CalculationExecution"]["Status"]["State"]
-        except Exception as e:
-            # Keep consistent behavior with SQL methods: swallow and log for retry callers.
-            self.log.exception(
-                "Exception while getting calculation state. Calculation execution id: %s, Exception: %s",
-                calculation_execution_id,
-                e,
-            )
-        return state
+            return response["Status"]["State"]
+        except KeyError:
+            self.log.error("Could not parse status for calculation %s", calculation_execution_id)
+            return None
 
     def get_calculation_state_change_reason(
         self, calculation_execution_id: str, use_cache: bool = False
