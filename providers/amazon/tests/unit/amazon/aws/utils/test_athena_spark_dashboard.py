@@ -19,7 +19,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from airflow.providers.amazon.aws.utils.athena_spark_dashboard import _duration_seconds, _xcom_and_ti_to_row
+from airflow.providers.amazon.aws.utils.athena_spark_dashboard import (
+    _duration_seconds,
+    _first_metadata_value,
+    _xcom_and_ti_to_row,
+)
 
 
 def test_duration_seconds_with_none_inputs():
@@ -79,3 +83,52 @@ def test_xcom_and_ti_to_row_falls_back_to_ti_state_for_missing_metadata_state():
 
     assert row["status"] == "failed"
     assert row["duration_seconds"] is None
+
+
+def test_first_metadata_value_returns_first_present_key():
+    metadata = {
+        "final_state": "COMPLETED",
+        "submission_time": "2026-03-06T10:00:00+00:00",
+    }
+
+    assert _first_metadata_value(metadata, "status", "final_state") == "COMPLETED"
+    assert _first_metadata_value(metadata, "start_time", "submission_time") == "2026-03-06T10:00:00+00:00"
+    assert _first_metadata_value(metadata, "missing_key") is None
+
+
+def test_xcom_and_ti_to_row_supports_requested_xcom_field_names():
+    xcom = SimpleNamespace(
+        dag_id="fallback_dag",
+        task_id="fallback_task",
+        run_id="fallback_run",
+        map_index=-1,
+        value={
+            "dag_id": "metadata_dag",
+            "task_id": "metadata_task",
+            "run_id": "metadata_run",
+            "calculation_execution_id": "calc-456",
+            "status": "FAILED",
+            "submission_time": datetime(2026, 3, 6, 10, 0, 0),
+            "completion_time": datetime(2026, 3, 6, 10, 5, 0),
+            "failure_reason": "Spark driver failed",
+            "output_location": "s3://example-bucket/output/",
+        },
+        timestamp=datetime(2026, 3, 6, 10, 5, 10),
+    )
+    task_instance = SimpleNamespace(
+        state="success",
+        start_date=datetime(2026, 3, 6, 9, 59, 0),
+        end_date=datetime(2026, 3, 6, 10, 6, 0),
+    )
+
+    row = _xcom_and_ti_to_row(xcom=xcom, task_instance=task_instance)
+
+    assert row["dag_id"] == "metadata_dag"
+    assert row["task_id"] == "metadata_task"
+    assert row["run_id"] == "metadata_run"
+    assert row["status"] == "FAILED"
+    assert row["submission_time"] == datetime(2026, 3, 6, 10, 0, 0)
+    assert row["completion_time"] == datetime(2026, 3, 6, 10, 5, 0)
+    assert row["failure_reason"] == "Spark driver failed"
+    assert row["metadata"]["output_location"] == "s3://example-bucket/output/"
+    assert row["duration_seconds"] == 300.0

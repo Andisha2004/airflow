@@ -1,0 +1,66 @@
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+-->
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Athena Spark Dashboard</title>
+</head>
+<body>
+    <h2>Athena Spark Dashboard</h2>
+    <form method="get" style="margin-bottom: 12px;">
+        <label><strong>DAG ID filter:</strong></label>
+        <input name="dag_id" value="{{ dag_id_filter }}" placeholder="example_dag" />
+        <button type="submit">Apply</button>
+        <a href="?">Clear</a>
+    </form>
+
+    {% if rows %}
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; font-size: 13px;">
+        <tr>
+            <th>DAG ID</th>
+            <th>Task ID</th>
+            <th>Run ID</th>
+            <th>CalculationExecutionId</th>
+            <th>Status</th>
+            <th>Start/Submission Time</th>
+            <th>Completion Time</th>
+            <th>Actions</th>
+        </tr>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row["dag_id"] }}</td>
+            <td>{{ row["task_id"] }}</td>
+            <td>{{ row["run_id"] }}</td>
+            <td><code>{{ row.get("calculation_execution_id") or "-" }}</code></td>
+            <td>{{ row.get("status") or "-" }}</td>
+            <td>{{ row.get("submission_time") or row.get("start_time") or "-" }}</td>
+            <td>{{ row.get("completion_time") or row.get("end_time") or "-" }}</td>
+            <td>
+                <a href="./detail?dag_id={{ quote(row['dag_id'] | string) }}&task_id={{ quote(row['task_id'] | string) }}&run_id={{ quote(row['run_id'] | string) }}&map_index={{ row['map_index'] }}">Details</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p>No Athena Spark runs found yet.</p>
+    <p>Once an Athena Spark task pushes execution metadata to XCom, recent runs will appear here automatically.</p>
+    {% endif %}
+</body>
+</html>

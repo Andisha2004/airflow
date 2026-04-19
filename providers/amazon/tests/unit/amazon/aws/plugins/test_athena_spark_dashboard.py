@@ -35,3 +35,11 @@ def test_plugin_exposes_airflow3_ui_extension_points():
     assert getattr(plugin, "appbuilder_views", []) == []
     assert len(getattr(plugin, "fastapi_apps", [])) == 1
     assert len(getattr(plugin, "external_views", [])) == 1
+
+
+def test_plugin_fastapi_app_uses_expected_url_prefix():
+    plugin = AthenaSparkDashboardPlugin()
+    fastapi_app = plugin.fastapi_apps[0]
+
+    assert fastapi_app["url_prefix"] == "/athena_spark_dashboard"
+    assert fastapi_app["name"] == "Athena Spark Dashboard"
