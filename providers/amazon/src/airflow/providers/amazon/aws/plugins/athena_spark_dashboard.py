@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from airflow.configuration import conf
 from airflow.providers.amazon.aws.utils.athena_spark_dashboard import (
@@ -63,20 +63,42 @@ def _build_task_run_url(row: dict) -> str:
     return _get_base_url_path(f"/dags/{dag_id}/runs/{run_id}/tasks/{task_id}?map_index={map_index}")
 
 
-def _build_detail_rows(row: dict) -> list[tuple[str, object]]:
+def _build_detail_url(row: dict) -> str:
+    dag_id = quote(str(row["dag_id"]), safe="")
+    task_id = quote(str(row["task_id"]), safe="")
+    run_id = quote(str(row["run_id"]), safe="")
+    return f"./runs/{dag_id}/{task_id}/{run_id}?map_index={row['map_index']}"
+
+
+def _build_identifier_rows(row: dict) -> list[tuple[str, object]]:
     return [
         ("DAG ID", row["dag_id"]),
         ("Task ID", row["task_id"]),
         ("Run ID", row["run_id"]),
         ("Map Index", row["map_index"]),
         ("CalculationExecutionId", row.get("calculation_execution_id") or "-"),
+    ]
+
+
+def _build_status_rows(row: dict) -> list[tuple[str, object]]:
+    return [
         ("Status", row.get("status") or "-"),
         ("Workgroup", row.get("workgroup") or "-"),
         ("Session ID", row.get("session_id") or "-"),
         ("Failure Reason", row.get("failure_reason") or row.get("state_change_reason") or "-"),
+    ]
+
+
+def _build_timing_rows(row: dict) -> list[tuple[str, object]]:
+    return [
         ("Submission Time", row.get("submission_time") or row.get("start_time") or "-"),
         ("Completion Time", row.get("completion_time") or row.get("end_time") or "-"),
         ("Duration(s)", row.get("duration_seconds") or "-"),
+    ]
+
+
+def _build_output_rows(row: dict) -> list[tuple[str, object]]:
+    return [
         ("Output Location", row.get("metadata", {}).get("output_location") or "-"),
     ]
 
@@ -95,6 +117,7 @@ def _create_dashboard_app() -> FastAPI | None:
             context={
                 "dag_id_filter": dag_id or "",
                 "rows": rows,
+                "build_detail_url": _build_detail_url,
                 "build_task_run_url": _build_task_run_url,
                 "quote": quote,
             },
@@ -108,46 +131,55 @@ def _create_dashboard_app() -> FastAPI | None:
     def list_runs(request: Request, dag_id: str | None = Query(default=None)):
         return _render_runs_page(request, dag_id)
 
-    @app.get("/detail", response_class=HTMLResponse)
+    @app.get("/runs/{dag_id}/{task_id}/{run_id}", response_class=HTMLResponse)
     def detail(
         request: Request,
-        dag_id: str | None = Query(default=None),
-        task_id: str | None = Query(default=None),
-        run_id: str | None = Query(default=None),
+        dag_id: str,
+        task_id: str,
+        run_id: str,
         map_index: int = Query(default=-1),
     ):
-        if not dag_id or not task_id or not run_id:
-            return TEMPLATES.TemplateResponse(
-                request=request,
-                name="athena_spark_dashboard/run_details.html",
-                context={
-                    "error": "Missing dag_id/task_id/run_id query parameters.",
-                    "detail_rows": [],
-                    "metadata_json": "",
-                    "task_run_url": None,
-                },
-            )
+        decoded_dag_id = unquote(dag_id)
+        decoded_task_id = unquote(task_id)
+        decoded_run_id = unquote(run_id)
 
-        row = get_athena_spark_run(dag_id=dag_id, task_id=task_id, run_id=run_id, map_index=map_index)
+        row = get_athena_spark_run(
+            dag_id=decoded_dag_id,
+            task_id=decoded_task_id,
+            run_id=decoded_run_id,
+            map_index=map_index,
+        )
         if not row:
             return TEMPLATES.TemplateResponse(
                 request=request,
                 name="athena_spark_dashboard/run_details.html",
                 context={
                     "error": "No Athena Spark run metadata found for this task instance.",
-                    "detail_rows": [],
+                    "identifier_rows": [],
+                    "status_rows": [],
+                    "timing_rows": [],
+                    "output_rows": [],
                     "metadata_json": "",
                     "task_run_url": None,
+                    "failure_reason": None,
+                    "is_failed": False,
                 },
             )
+        failure_reason = row.get("failure_reason") or row.get("state_change_reason")
+        status = str(row.get("status") or "").upper()
         return TEMPLATES.TemplateResponse(
             request=request,
             name="athena_spark_dashboard/run_details.html",
             context={
                 "error": None,
-                "detail_rows": _build_detail_rows(row),
+                "identifier_rows": _build_identifier_rows(row),
+                "status_rows": _build_status_rows(row),
+                "timing_rows": _build_timing_rows(row),
+                "output_rows": _build_output_rows(row),
                 "metadata_json": json.dumps(row.get("metadata") or {}, indent=2, sort_keys=True, default=str),
                 "task_run_url": _build_task_run_url(row),
+                "failure_reason": failure_reason,
+                "is_failed": status in {"FAILED", "CANCELLED"},
             },
         )
 

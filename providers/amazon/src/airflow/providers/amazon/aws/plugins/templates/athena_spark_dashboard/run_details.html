@@ -24,13 +24,50 @@
 </head>
 <body>
     <h2>Athena Spark Run Details</h2>
-    <p><a href="./">Back to dashboard</a></p>
+    <p><a href="../">Back to runs list</a></p>
 
     {% if error %}
     <p>{{ error }}</p>
     {% else %}
-    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
-        {% for key, value in detail_rows %}
+    {% if is_failed and failure_reason %}
+    <div style="margin-bottom: 16px; border: 1px solid #c62828; background: #fdecea; color: #7f1d1d; padding: 12px;">
+        <strong>Run failed:</strong> {{ failure_reason }}
+    </div>
+    {% endif %}
+
+    <h3>Basic Identifiers</h3>
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
+        {% for key, value in identifier_rows %}
+        <tr>
+            <th align="left">{{ key }}</th>
+            <td>{{ value }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h3>Execution Status</h3>
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
+        {% for key, value in status_rows %}
+        <tr>
+            <th align="left">{{ key }}</th>
+            <td>{{ value }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h3>Timing Information</h3>
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
+        {% for key, value in timing_rows %}
+        <tr>
+            <th align="left">{{ key }}</th>
+            <td>{{ value }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h3>Output</h3>
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
+        {% for key, value in output_rows %}
         <tr>
             <th align="left">{{ key }}</th>
             <td>{{ value }}</td>
@@ -42,7 +79,7 @@
     <p><a href="{{ task_run_url }}">Open task run</a></p>
     {% endif %}
 
-    <h4>Raw Metadata</h4>
+    <h3>Raw Metadata / Debug JSON</h3>
     <pre>{{ metadata_json }}</pre>
     {% endif %}
 </body>
