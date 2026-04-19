@@ -28,6 +28,18 @@ from airflow.utils.session import NEW_SESSION, provide_session
 
 ATHENA_SPARK_METADATA_KEY = "athena_spark_metadata"
 
+# If your operator pushes Athena Spark metadata under a different XCom key,
+# update this constant to match the key used in `xcom_push(key=..., value=...)`.
+
+
+def _first_metadata_value(metadata: dict[str, Any], *keys: str) -> Any:
+    """Return the first non-empty metadata value for the provided keys."""
+    for key in keys:
+        value = metadata.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
 
 @provide_session
 def get_recent_athena_spark_runs(
@@ -87,21 +99,26 @@ def get_athena_spark_run(
 
 def _xcom_and_ti_to_row(*, xcom: XComModel, task_instance: TaskInstance) -> dict[str, Any]:
     metadata = xcom.value if isinstance(xcom.value, dict) else {}
-    started_at = task_instance.start_date
-    ended_at = task_instance.end_date
+    # Adapt these fallback key lists if your Athena Spark XCom schema uses
+    # different field names for timing or state values.
+    started_at = _first_metadata_value(metadata, "submission_time", "start_time") or task_instance.start_date
+    ended_at = _first_metadata_value(metadata, "completion_time", "end_time") or task_instance.end_date
     duration = _duration_seconds(started_at=started_at, ended_at=ended_at)
 
     return {
-        "dag_id": xcom.dag_id,
-        "task_id": xcom.task_id,
-        "run_id": xcom.run_id,
+        "dag_id": _first_metadata_value(metadata, "dag_id") or xcom.dag_id,
+        "task_id": _first_metadata_value(metadata, "task_id") or xcom.task_id,
+        "run_id": _first_metadata_value(metadata, "run_id") or xcom.run_id,
         "map_index": xcom.map_index,
-        "calculation_execution_id": metadata.get("calculation_execution_id"),
-        "status": metadata.get("final_state") or task_instance.state,
-        "workgroup": metadata.get("workgroup"),
-        "session_id": metadata.get("session_id"),
-        "state_change_reason": metadata.get("state_change_reason"),
+        "calculation_execution_id": _first_metadata_value(metadata, "calculation_execution_id"),
+        "status": _first_metadata_value(metadata, "status", "final_state") or task_instance.state,
+        "workgroup": _first_metadata_value(metadata, "workgroup"),
+        "session_id": _first_metadata_value(metadata, "session_id"),
+        "failure_reason": _first_metadata_value(metadata, "failure_reason", "state_change_reason"),
+        "state_change_reason": _first_metadata_value(metadata, "state_change_reason", "failure_reason"),
         "xcom_timestamp": xcom.timestamp,
+        "submission_time": started_at,
+        "completion_time": ended_at,
         "start_time": started_at,
         "end_time": ended_at,
         "duration_seconds": duration,
