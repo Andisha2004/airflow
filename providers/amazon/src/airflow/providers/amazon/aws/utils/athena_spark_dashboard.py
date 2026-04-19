@@ -16,8 +16,9 @@
 # under the License.
 from __future__ import annotations
 
+import json
 from datetime import datetime
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
@@ -30,6 +31,15 @@ ATHENA_SPARK_METADATA_KEY = "athena_spark_metadata"
 
 # If your operator pushes Athena Spark metadata under a different XCom key,
 # update this constant to match the key used in `xcom_push(key=..., value=...)`.
+#
+# If you later want to filter to only a subset of Athena Spark tasks, the safest
+# place to add that logic is in `get_recent_athena_spark_runs()` by adding more
+# conditions to the SQLAlchemy statement, for example on `XComModel.task_id`.
+#
+# The normalization logic below is intentionally defensive. If your operator
+# changes payload shape, update the fallback key lists in
+# `_normalize_athena_spark_run_record()` instead of spreading schema handling
+# into the view layer.
 
 
 def _first_metadata_value(metadata: dict[str, Any], *keys: str) -> Any:
@@ -39,6 +49,30 @@ def _first_metadata_value(metadata: dict[str, Any], *keys: str) -> Any:
         if value not in (None, ""):
             return value
     return None
+
+
+def _coerce_metadata_mapping(value: Any) -> dict[str, Any]:
+    """
+    Convert the raw XCom value into a dictionary for downstream normalization.
+
+    Some operators push a Python dict directly. Others may push a JSON string.
+    Any unsupported payload shape falls back to an empty dict so the UI can
+    render a graceful empty state instead of crashing.
+    """
+    if isinstance(value, dict):
+        return value
+
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+
+    if isinstance(value, Mapping):
+        return dict(value)
+
+    return {}
 
 
 @provide_session
@@ -98,12 +132,36 @@ def get_athena_spark_run(
 
 
 def _xcom_and_ti_to_row(*, xcom: XComModel, task_instance: TaskInstance) -> dict[str, Any]:
-    metadata = xcom.value if isinstance(xcom.value, dict) else {}
+    metadata = _coerce_metadata_mapping(xcom.value)
+    return _normalize_athena_spark_run_record(xcom=xcom, task_instance=task_instance, metadata=metadata)
+
+
+def _normalize_athena_spark_run_record(
+    *, xcom: XComModel, task_instance: TaskInstance, metadata: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Normalize one Athena Spark XCom payload into a stable UI-facing structure.
+
+    Stable keys used by the UI:
+    - dag_id
+    - task_id
+    - run_id
+    - calculation_execution_id
+    - status
+    - submission_time
+    - completion_time
+    - failure_reason
+    - output_location
+
+    Extra keys such as map_index, session_id, workgroup, duration_seconds and
+    raw metadata are also returned because the details page benefits from them.
+    """
     # Adapt these fallback key lists if your Athena Spark XCom schema uses
     # different field names for timing or state values.
     started_at = _first_metadata_value(metadata, "submission_time", "start_time") or task_instance.start_date
     ended_at = _first_metadata_value(metadata, "completion_time", "end_time") or task_instance.end_date
     duration = _duration_seconds(started_at=started_at, ended_at=ended_at)
+    output_location = _first_metadata_value(metadata, "output_location", "result_output_location", "s3_output")
 
     return {
         "dag_id": _first_metadata_value(metadata, "dag_id") or xcom.dag_id,
@@ -116,6 +174,7 @@ def _xcom_and_ti_to_row(*, xcom: XComModel, task_instance: TaskInstance) -> dict
         "session_id": _first_metadata_value(metadata, "session_id"),
         "failure_reason": _first_metadata_value(metadata, "failure_reason", "state_change_reason"),
         "state_change_reason": _first_metadata_value(metadata, "state_change_reason", "failure_reason"),
+        "output_location": output_location,
         "xcom_timestamp": xcom.timestamp,
         "submission_time": started_at,
         "completion_time": ended_at,
