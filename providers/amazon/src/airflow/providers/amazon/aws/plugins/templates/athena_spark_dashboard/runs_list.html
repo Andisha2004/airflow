@@ -21,46 +21,264 @@
 <head>
     <meta charset="utf-8">
     <title>Athena Spark Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #1f2937;
+            margin: 24px;
+        }
+
+        .page-header {
+            margin-bottom: 20px;
+        }
+
+        .page-header h2 {
+            margin: 0 0 6px;
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .page-subtitle {
+            margin: 0;
+            color: #4b5563;
+            font-size: 14px;
+        }
+
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            padding: 14px 16px;
+            border: 1px solid #dbe3ec;
+            border-radius: 10px;
+            background: #f8fafc;
+        }
+
+        .filter-bar label {
+            font-weight: 600;
+        }
+
+        .filter-input {
+            min-width: 220px;
+            padding: 8px 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            background: #ffffff;
+            color: #0f172a;
+            text-decoration: none;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .button:hover {
+            background: #f1f5f9;
+        }
+
+        .button-primary {
+            border-color: #2563eb;
+            background: #2563eb;
+            color: #ffffff;
+        }
+
+        .button-primary:hover {
+            background: #1d4ed8;
+        }
+
+        .panel {
+            border: 1px solid #dbe3ec;
+            border-radius: 12px;
+            background: #ffffff;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 14px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            background: #f8fafc;
+            font-weight: 600;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th,
+        td {
+            padding: 12px 14px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f8fafc;
+            color: #334155;
+            font-size: 12px;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        tbody tr:hover {
+            background: #f8fafc;
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .text-monospace {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-running {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .badge-failed {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+
+        .badge-cancelled {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-default {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .run-row-failed {
+            background: #fff7f7;
+        }
+
+        .actions {
+            white-space: nowrap;
+        }
+
+        .empty-state {
+            padding: 28px 24px;
+            text-align: center;
+        }
+
+        .empty-state h3 {
+            margin: 0 0 8px;
+            font-size: 20px;
+        }
+
+        .empty-state p {
+            margin: 0 0 8px;
+            color: #4b5563;
+        }
+    </style>
 </head>
 <body>
-    <h2>Athena Spark Dashboard</h2>
-    <form method="get" style="margin-bottom: 12px;">
-        <label><strong>DAG ID filter:</strong></label>
-        <input name="dag_id" value="{{ dag_id_filter }}" placeholder="example_dag" />
-        <button type="submit">Apply</button>
-        <a href="?">Clear</a>
+    <div class="page-header">
+        <h2>Athena Spark Dashboard</h2>
+        <p class="page-subtitle">Recent Athena Spark runs collected from Airflow XCom metadata.</p>
+    </div>
+
+    <form method="get" class="filter-bar">
+        <label for="dag_id"><strong>DAG ID filter</strong></label>
+        <input
+            class="filter-input"
+            id="dag_id"
+            name="dag_id"
+            value="{{ dag_id_filter }}"
+            placeholder="example_dag"
+        />
+        <button class="button button-primary" type="submit">Apply</button>
+        <a class="button" href="?">Clear</a>
     </form>
 
     {% if rows %}
-    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; font-size: 13px;">
-        <tr>
-            <th>DAG ID</th>
-            <th>Task ID</th>
-            <th>Run ID</th>
-            <th>CalculationExecutionId</th>
-            <th>Status</th>
-            <th>Start/Submission Time</th>
-            <th>Completion Time</th>
-            <th>Actions</th>
-        </tr>
-        {% for row in rows %}
-        <tr>
-            <td>{{ row["dag_id"] }}</td>
-            <td>{{ row["task_id"] }}</td>
-            <td>{{ row["run_id"] }}</td>
-            <td><code>{{ row.get("calculation_execution_id") or "-" }}</code></td>
-            <td>{{ row.get("status") or "-" }}</td>
-            <td>{{ row.get("submission_time") or row.get("start_time") or "-" }}</td>
-            <td>{{ row.get("completion_time") or row.get("end_time") or "-" }}</td>
-            <td>
-                <a href="{{ build_detail_url(row) }}">Details</a>
-            </td>
-        </tr>
-        {% endfor %}
-    </table>
+    <div class="panel">
+        <div class="panel-header">{{ rows | length }} Athena Spark run{{ "" if rows|length == 1 else "s" }}</div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>DAG ID</th>
+                        <th>Task ID</th>
+                        <th>Run ID</th>
+                        <th>Calculation Execution ID</th>
+                        <th>Status</th>
+                        <th>Submission Time</th>
+                        <th>Completion Time</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    {% set status = (row.get("status") or "UNKNOWN") | upper %}
+                    <tr class="{% if status in ['FAILED', 'CANCELLED'] %}run-row-failed{% endif %}">
+                        <td>{{ row["dag_id"] }}</td>
+                        <td>{{ row["task_id"] }}</td>
+                        <td class="text-monospace">{{ row["run_id"] }}</td>
+                        <td class="text-monospace">{{ row.get("calculation_execution_id") or "-" }}</td>
+                        <td>
+                            <span
+                                class="badge
+                                {% if status in ['COMPLETED', 'SUCCEEDED', 'SUCCESS'] %}badge-success
+                                {% elif status in ['RUNNING', 'QUEUED', 'PENDING', 'STARTING'] %}badge-running
+                                {% elif status == 'FAILED' %}badge-failed
+                                {% elif status == 'CANCELLED' %}badge-cancelled
+                                {% else %}badge-default{% endif %}"
+                            >
+                                {{ status }}
+                            </span>
+                        </td>
+                        <td>{{ row.get("submission_time") or row.get("start_time") or "-" }}</td>
+                        <td>{{ row.get("completion_time") or row.get("end_time") or "-" }}</td>
+                        <td class="actions">
+                            <a href="{{ build_detail_url(row) }}">Details</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
     {% else %}
-    <p>No Athena Spark runs found yet.</p>
-    <p>Once an Athena Spark task pushes execution metadata to XCom, recent runs will appear here automatically.</p>
+    <div class="panel empty-state">
+        <h3>No Athena Spark runs yet</h3>
+        <p>No dashboard data was found for the current filter.</p>
+        <p>Once an Athena Spark task pushes execution metadata to XCom, recent runs will appear here automatically.</p>
+    </div>
     {% endif %}
 </body>
 </html>

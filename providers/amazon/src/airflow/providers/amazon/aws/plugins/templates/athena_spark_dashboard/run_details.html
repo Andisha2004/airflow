@@ -21,66 +21,261 @@
 <head>
     <meta charset="utf-8">
     <title>Athena Spark Run Details</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #1f2937;
+            margin: 24px;
+        }
+
+        .page-header {
+            margin-bottom: 18px;
+        }
+
+        .page-header h2 {
+            margin: 0 0 6px;
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .page-subtitle {
+            margin: 0;
+            color: #4b5563;
+            font-size: 14px;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            background: #ffffff;
+            color: #0f172a;
+            text-decoration: none;
+            font-size: 14px;
+        }
+
+        .button:hover {
+            background: #f1f5f9;
+        }
+
+        .notice {
+            margin-bottom: 18px;
+            padding: 14px 16px;
+            border-radius: 10px;
+            border: 1px solid #fecaca;
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
+        .panel {
+            margin-bottom: 18px;
+            border: 1px solid #dbe3ec;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #ffffff;
+        }
+
+        .panel-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            background: #f8fafc;
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+            vertical-align: top;
+            font-size: 14px;
+        }
+
+        th {
+            width: 240px;
+            background: #fcfdff;
+            color: #334155;
+            font-weight: 600;
+        }
+
+        tr:last-child th,
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-running {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .badge-failed {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+
+        .badge-cancelled {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-default {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .debug-block {
+            margin: 0;
+            padding: 16px;
+            overflow-x: auto;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .empty-state {
+            padding: 24px;
+            border: 1px solid #dbe3ec;
+            border-radius: 12px;
+            background: #ffffff;
+        }
+
+        .empty-state h3 {
+            margin: 0 0 8px;
+        }
+
+        .empty-state p {
+            margin: 0;
+            color: #4b5563;
+        }
+    </style>
 </head>
 <body>
-    <h2>Athena Spark Run Details</h2>
-    <p><a href="../">Back to runs list</a></p>
+    <div class="page-header">
+        <h2>Athena Spark Run Details</h2>
+        <p class="page-subtitle">Inspect a single Athena Spark execution and its captured metadata.</p>
+    </div>
+
+    <div class="toolbar">
+        <a class="button" href="../">Back to runs list</a>
+        {% if task_run_url %}
+        <a class="button" href="{{ task_run_url }}">Open task run</a>
+        {% endif %}
+    </div>
 
     {% if error %}
-    <p>{{ error }}</p>
+    <div class="empty-state">
+        <h3>Run metadata unavailable</h3>
+        <p>{{ error }}</p>
+    </div>
     {% else %}
+    {% set status_ns = namespace(value="") %}
+    {% for key, value in status_rows %}
+        {% if key == "Status" %}
+            {% set status_ns.value = (value or "UNKNOWN") | string | upper %}
+        {% endif %}
+    {% endfor %}
+
     {% if is_failed and failure_reason %}
-    <div style="margin-bottom: 16px; border: 1px solid #c62828; background: #fdecea; color: #7f1d1d; padding: 12px;">
+    <div class="notice">
         <strong>Run failed:</strong> {{ failure_reason }}
     </div>
     {% endif %}
 
-    <h3>Basic Identifiers</h3>
-    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
-        {% for key, value in identifier_rows %}
-        <tr>
-            <th align="left">{{ key }}</th>
-            <td>{{ value }}</td>
-        </tr>
-        {% endfor %}
-    </table>
+    <div class="panel">
+        <div class="panel-header">
+            Execution Status
+            <span
+                class="badge
+                {% if status_ns.value in ['COMPLETED', 'SUCCEEDED', 'SUCCESS'] %}badge-success
+                {% elif status_ns.value in ['RUNNING', 'QUEUED', 'PENDING', 'STARTING'] %}badge-running
+                {% elif status_ns.value == 'FAILED' %}badge-failed
+                {% elif status_ns.value == 'CANCELLED' %}badge-cancelled
+                {% else %}badge-default{% endif %}"
+                style="margin-left: 8px;"
+            >
+                {{ status_ns.value or "UNKNOWN" }}
+            </span>
+        </div>
+        <table>
+            {% for key, value in status_rows %}
+            <tr>
+                <th>{{ key }}</th>
+                <td>{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
 
-    <h3>Execution Status</h3>
-    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
-        {% for key, value in status_rows %}
-        <tr>
-            <th align="left">{{ key }}</th>
-            <td>{{ value }}</td>
-        </tr>
-        {% endfor %}
-    </table>
+    <div class="panel">
+        <div class="panel-header">Basic Identifiers</div>
+        <table>
+            {% for key, value in identifier_rows %}
+            <tr>
+                <th>{{ key }}</th>
+                <td>{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
 
-    <h3>Timing Information</h3>
-    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
-        {% for key, value in timing_rows %}
-        <tr>
-            <th align="left">{{ key }}</th>
-            <td>{{ value }}</td>
-        </tr>
-        {% endfor %}
-    </table>
+    <div class="panel">
+        <div class="panel-header">Timing Information</div>
+        <table>
+            {% for key, value in timing_rows %}
+            <tr>
+                <th>{{ key }}</th>
+                <td>{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
 
-    <h3>Output</h3>
-    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px;">
-        {% for key, value in output_rows %}
-        <tr>
-            <th align="left">{{ key }}</th>
-            <td>{{ value }}</td>
-        </tr>
-        {% endfor %}
-    </table>
+    <div class="panel">
+        <div class="panel-header">Output and Debugging</div>
+        <table>
+            {% for key, value in output_rows %}
+            <tr>
+                <th>{{ key }}</th>
+                <td>{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
 
-    {% if task_run_url %}
-    <p><a href="{{ task_run_url }}">Open task run</a></p>
-    {% endif %}
-
-    <h3>Raw Metadata / Debug JSON</h3>
-    <pre>{{ metadata_json }}</pre>
+    <div class="panel">
+        <div class="panel-header">Raw Metadata / Debug JSON</div>
+        <pre class="debug-block">{{ metadata_json }}</pre>
+    </div>
     {% endif %}
 </body>
 </html>
