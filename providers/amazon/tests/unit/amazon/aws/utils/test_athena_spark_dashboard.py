@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from airflow.providers.amazon.aws.utils.athena_spark_dashboard import (
+    _coerce_metadata_mapping,
     _duration_seconds,
     _first_metadata_value,
     _xcom_and_ti_to_row,
@@ -66,6 +67,7 @@ def test_xcom_and_ti_to_row_maps_expected_fields():
     assert row["status"] == "COMPLETED"
     assert row["workgroup"] == "primary"
     assert row["duration_seconds"] == 30.0
+    assert row["output_location"] is None
 
 
 def test_xcom_and_ti_to_row_falls_back_to_ti_state_for_missing_metadata_state():
@@ -94,6 +96,17 @@ def test_first_metadata_value_returns_first_present_key():
     assert _first_metadata_value(metadata, "status", "final_state") == "COMPLETED"
     assert _first_metadata_value(metadata, "start_time", "submission_time") == "2026-03-06T10:00:00+00:00"
     assert _first_metadata_value(metadata, "missing_key") is None
+
+
+def test_coerce_metadata_mapping_supports_json_string_payload():
+    metadata = _coerce_metadata_mapping('{"status": "COMPLETED", "output_location": "s3://example/output"}')
+
+    assert metadata["status"] == "COMPLETED"
+    assert metadata["output_location"] == "s3://example/output"
+
+
+def test_coerce_metadata_mapping_returns_empty_dict_for_invalid_payload():
+    assert _coerce_metadata_mapping("not-json") == {}
 
 
 def test_xcom_and_ti_to_row_supports_requested_xcom_field_names():
@@ -130,5 +143,6 @@ def test_xcom_and_ti_to_row_supports_requested_xcom_field_names():
     assert row["submission_time"] == datetime(2026, 3, 6, 10, 0, 0)
     assert row["completion_time"] == datetime(2026, 3, 6, 10, 5, 0)
     assert row["failure_reason"] == "Spark driver failed"
+    assert row["output_location"] == "s3://example-bucket/output/"
     assert row["metadata"]["output_location"] == "s3://example-bucket/output/"
     assert row["duration_seconds"] == 300.0
