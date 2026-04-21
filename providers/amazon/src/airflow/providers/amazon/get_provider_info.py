@@ -358,10 +358,7 @@ def get_provider_info():
         "operators": [
             {
                 "integration-name": "Amazon Athena",
-                "python-modules": [
-                    "airflow.providers.amazon.aws.operators.athena",
-                    "airflow.providers.amazon.aws.operators.athena_spark",
-                ],
+                "python-modules": ["airflow.providers.amazon.aws.operators.athena"],
             },
             {
                 "integration-name": "Amazon Web Services",
