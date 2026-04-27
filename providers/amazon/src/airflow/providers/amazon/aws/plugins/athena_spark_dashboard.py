@@ -22,7 +22,8 @@ from urllib.parse import quote, unquote, urlparse
 
 from airflow.configuration import conf
 from airflow.providers.amazon.aws.utils.athena_spark_dashboard import (
-    get_athena_spark_run,
+    compute_dashboard_summary,
+    get_athena_spark_run_detail,
     get_recent_athena_spark_runs,
 )
 from airflow.providers.common.compat.sdk import AirflowPlugin
@@ -99,7 +100,7 @@ def _build_timing_rows(row: dict) -> list[tuple[str, object]]:
 
 def _build_output_rows(row: dict) -> list[tuple[str, object]]:
     return [
-        ("Output Location", row.get("metadata", {}).get("output_location") or "-"),
+        ("Output Location", row.get("output_location") or "-"),
     ]
 
 
@@ -109,14 +110,25 @@ def _create_dashboard_app() -> FastAPI | None:
 
     app = FastAPI()
 
-    def _render_runs_page(request: Request, dag_id: str | None = None):
-        rows = get_recent_athena_spark_runs(limit=100, dag_id=dag_id)
+    def _render_runs_page(
+        request: Request,
+        dag_id_filter: str | None = None,
+        status_filter: str | None = None,
+    ):
+        all_rows = get_recent_athena_spark_runs(limit=100, dag_id_filter=dag_id_filter)
+        rows = get_recent_athena_spark_runs(
+            limit=100,
+            dag_id_filter=dag_id_filter,
+            status_filter=status_filter,
+        )
         return TEMPLATES.TemplateResponse(
             request=request,
             name="athena_spark_dashboard/runs_list.html",
             context={
-                "dag_id_filter": dag_id or "",
+                "dag_id_filter": dag_id_filter or "",
+                "status_filter": (status_filter or "ALL").upper(),
                 "rows": rows,
+                "summary_cards": compute_dashboard_summary(all_rows),
                 "build_detail_url": _build_detail_url,
                 "build_task_run_url": _build_task_run_url,
                 "quote": quote,
@@ -124,12 +136,20 @@ def _create_dashboard_app() -> FastAPI | None:
         )
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, dag_id: str | None = Query(default=None)):
-        return _render_runs_page(request, dag_id)
+    def index(
+        request: Request,
+        dag_id: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+    ):
+        return _render_runs_page(request, dag_id_filter=dag_id, status_filter=status)
 
     @app.get("/runs", response_class=HTMLResponse)
-    def list_runs(request: Request, dag_id: str | None = Query(default=None)):
-        return _render_runs_page(request, dag_id)
+    def list_runs(
+        request: Request,
+        dag_id: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+    ):
+        return _render_runs_page(request, dag_id_filter=dag_id, status_filter=status)
 
     @app.get("/runs/{dag_id}/{task_id}/{run_id}", response_class=HTMLResponse)
     def detail(
@@ -143,7 +163,7 @@ def _create_dashboard_app() -> FastAPI | None:
         decoded_task_id = unquote(task_id)
         decoded_run_id = unquote(run_id)
 
-        row = get_athena_spark_run(
+        row = get_athena_spark_run_detail(
             dag_id=decoded_dag_id,
             task_id=decoded_task_id,
             run_id=decoded_run_id,

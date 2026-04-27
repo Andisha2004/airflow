@@ -44,6 +44,10 @@
             font-size: 14px;
         }
 
+        .dashboard-shell {
+            max-width: 1500px;
+        }
+
         .filter-bar {
             display: flex;
             align-items: center;
@@ -99,6 +103,124 @@
             border-radius: 12px;
             background: #ffffff;
             overflow: hidden;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+
+        .summary-card {
+            padding: 16px 18px;
+            border: 1px solid #dbe3ec;
+            border-radius: 12px;
+            background: #ffffff;
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        }
+
+        .summary-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+        }
+
+        .summary-label {
+            margin: 0 0 8px;
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .summary-value {
+            margin: 0;
+            font-size: 30px;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .summary-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            margin-bottom: 12px;
+            border-radius: 999px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .summary-all {
+            border-color: #bfdbfe;
+        }
+
+        .summary-all .summary-icon,
+        .summary-all .summary-value {
+            color: #1d4ed8;
+        }
+
+        .summary-all .summary-icon {
+            background: #dbeafe;
+        }
+
+        .summary-success .summary-value {
+            color: #15803d;
+        }
+
+        .summary-success .summary-icon {
+            background: #dcfce7;
+            color: #15803d;
+        }
+
+        .summary-failed .summary-value {
+            color: #b91c1c;
+        }
+
+        .summary-failed .summary-icon {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+
+        .summary-running .summary-value {
+            color: #0f766e;
+        }
+
+        .summary-running .summary-icon {
+            background: #ccfbf1;
+            color: #0f766e;
+        }
+
+        .summary-queued .summary-value {
+            color: #374151;
+        }
+
+        .summary-queued .summary-icon {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .summary-required-action .summary-value {
+            color: #7c3aed;
+        }
+
+        .summary-required-action .summary-icon {
+            background: #ede9fe;
+            color: #7c3aed;
+        }
+
+        .summary-card.is-active {
+            border-width: 2px;
+            border-color: #0f172a;
+        }
+
+        .summary-warning .summary-value {
+            color: #b45309;
         }
 
         .panel-header {
@@ -163,8 +285,8 @@
         }
 
         .badge-running {
-            background: #dbeafe;
-            color: #1d4ed8;
+            background: #ccfbf1;
+            color: #0f766e;
         }
 
         .badge-failed {
@@ -172,9 +294,14 @@
             color: #b91c1c;
         }
 
-        .badge-cancelled {
-            background: #fef3c7;
-            color: #92400e;
+        .badge-queued {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .badge-required-action {
+            background: #ede9fe;
+            color: #7c3aed;
         }
 
         .badge-default {
@@ -207,78 +334,110 @@
     </style>
 </head>
 <body>
-    <div class="page-header">
-        <h2>Athena Spark Dashboard</h2>
-        <p class="page-subtitle">Recent Athena Spark runs collected from Airflow XCom metadata.</p>
-    </div>
-
-    <form method="get" class="filter-bar">
-        <label for="dag_id"><strong>DAG ID filter</strong></label>
-        <input
-            class="filter-input"
-            id="dag_id"
-            name="dag_id"
-            value="{{ dag_id_filter }}"
-            placeholder="example_dag"
-        />
-        <button class="button button-primary" type="submit">Apply</button>
-        <a class="button" href="?">Clear</a>
-    </form>
-
-    {% if rows %}
-    <div class="panel">
-        <div class="panel-header">{{ rows | length }} Athena Spark run{{ "" if rows|length == 1 else "s" }}</div>
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>DAG ID</th>
-                        <th>Task ID</th>
-                        <th>Run ID</th>
-                        <th>Calculation Execution ID</th>
-                        <th>Status</th>
-                        <th>Submission Time</th>
-                        <th>Completion Time</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in rows %}
-                    {% set status = (row.get("status") or "UNKNOWN") | upper %}
-                    <tr class="{% if status in ['FAILED', 'CANCELLED'] %}run-row-failed{% endif %}">
-                        <td>{{ row["dag_id"] }}</td>
-                        <td>{{ row["task_id"] }}</td>
-                        <td class="text-monospace">{{ row["run_id"] }}</td>
-                        <td class="text-monospace">{{ row.get("calculation_execution_id") or "-" }}</td>
-                        <td>
-                            <span
-                                class="badge
-                                {% if status in ['COMPLETED', 'SUCCEEDED', 'SUCCESS'] %}badge-success
-                                {% elif status in ['RUNNING', 'QUEUED', 'PENDING', 'STARTING'] %}badge-running
-                                {% elif status == 'FAILED' %}badge-failed
-                                {% elif status == 'CANCELLED' %}badge-cancelled
-                                {% else %}badge-default{% endif %}"
-                            >
-                                {{ status }}
-                            </span>
-                        </td>
-                        <td>{{ row.get("submission_time") or row.get("start_time") or "-" }}</td>
-                        <td>{{ row.get("completion_time") or row.get("end_time") or "-" }}</td>
-                        <td class="actions">
-                            <a href="{{ build_detail_url(row) }}">Details</a>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    <div class="dashboard-shell">
+        <div class="page-header">
+            <h2>Athena Spark Dashboard</h2>
+            <p class="page-subtitle">Recent Athena Spark runs collected from Airflow XCom metadata.</p>
         </div>
+
+        <form method="get" class="filter-bar">
+            <label for="dag_id"><strong>DAG ID filter</strong></label>
+            <input
+                class="filter-input"
+                id="dag_id"
+                name="dag_id"
+                value="{{ dag_id_filter }}"
+                placeholder="example_dag"
+            />
+            {% if status_filter and status_filter != "ALL" %}
+            <input type="hidden" name="status" value="{{ status_filter }}">
+            {% endif %}
+            <button class="button button-primary" type="submit">Apply</button>
+            <a class="button" href="?">Clear</a>
+        </form>
+
+        <div class="summary-grid">
+            {% for card in summary_cards %}
+            <a
+                class="summary-card summary-{{ card['tone'] }} {% if status_filter == card['key'] %}is-active{% endif %}"
+                href="?{% if dag_id_filter %}dag_id={{ quote(dag_id_filter) }}&{% endif %}{% if card['key'] != 'ALL' %}status={{ card['key'] }}{% endif %}"
+            >
+                <div class="summary-icon">{{ card["icon"] }}</div>
+                <p class="summary-label">{{ card["label"] }}</p>
+                <p class="summary-value">{{ card["count"] }}</p>
+            </a>
+            {% endfor %}
+        </div>
+
+        {% if rows %}
+        <div class="panel">
+            <div class="panel-header">{{ rows | length }} Athena Spark run{{ "" if rows|length == 1 else "s" }}</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>DAG ID</th>
+                            <th>Task ID</th>
+                            <th>Run ID</th>
+                            <th>Map</th>
+                            <th>CalculationExecutionId</th>
+                            <th>Status</th>
+                            <th>Workgroup</th>
+                            <th>Start</th>
+                            <th>End</th>
+                            <th>Duration(s)</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        {% set status = (row.get("status") or "UNKNOWN") | upper %}
+                        <tr class="{% if status == 'FAILED' %}run-row-failed{% endif %}">
+                            <td>{{ row["dag_id"] }}</td>
+                            <td>{{ row["task_id"] }}</td>
+                            <td class="text-monospace">{{ row["run_id"] }}</td>
+                            <td>{{ row.get("map_index", "-") }}</td>
+                            <td class="text-monospace">{{ row.get("calculation_execution_id") or "-" }}</td>
+                            <td>
+                                <span
+                                    class="badge
+                                    {% if status == 'SUCCESS' %}badge-success
+                                    {% elif status == 'RUNNING' %}badge-running
+                                    {% elif status == 'FAILED' %}badge-failed
+                                    {% elif status == 'QUEUED' %}badge-queued
+                                    {% elif status == 'REQUIRED_ACTION' %}badge-required-action
+                                    {% else %}badge-default{% endif %}"
+                                >
+                                    {% if status == 'SUCCESS' %}✓
+                                    {% elif status == 'FAILED' %}✕
+                                    {% elif status == 'RUNNING' %}↻
+                                    {% elif status == 'QUEUED' %}◌
+                                    {% elif status == 'REQUIRED_ACTION' %}!{% endif %}
+                                    {{ status }}
+                                </span>
+                            </td>
+                            <td>{{ row.get("workgroup") or "-" }}</td>
+                            <td>{{ row.get("submission_time") or row.get("start_time") or "-" }}</td>
+                            <td>{{ row.get("completion_time") or row.get("end_time") or "-" }}</td>
+                            <td>{{ row.get("duration_seconds") or "-" }}</td>
+                            <td class="actions">
+                                <a href="{{ build_detail_url(row) }}">Details</a>
+                                |
+                                <a href="{{ build_task_run_url(row) }}">Task Run</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% else %}
+        <div class="panel empty-state">
+            <h3>No Athena Spark runs found</h3>
+            <p>No Airflow task has pushed Athena Spark metadata to XCom for the current filter.</p>
+            <p>Once a real Athena Spark operator or sensor run stores `athena_spark_metadata`, it will appear here automatically.</p>
+        </div>
+        {% endif %}
     </div>
-    {% else %}
-    <div class="panel empty-state">
-        <h3>No Athena Spark runs yet</h3>
-        <p>No dashboard data was found for the current filter.</p>
-        <p>Once an Athena Spark task pushes execution metadata to XCom, recent runs will appear here automatically.</p>
-    </div>
-    {% endif %}
 </body>
 </html>
