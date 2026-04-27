@@ -18,6 +18,7 @@
 """
 AthenaSparkOperator for running Apache Spark calculations in Amazon Athena.
 """
+
 from __future__ import annotations
 
 import time
@@ -226,9 +227,7 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
     def on_kill(self) -> None:
         """Request cancellation of the calculation when the task is killed."""
         if self._calculation_execution_id:
-            self.log.info(
-                "Received kill signal; stopping calculation %s", self._calculation_execution_id
-            )
+            self.log.info("Received kill signal; stopping calculation %s", self._calculation_execution_id)
             try:
                 self.hook.stop_calculation(self._calculation_execution_id)
             except Exception as e:

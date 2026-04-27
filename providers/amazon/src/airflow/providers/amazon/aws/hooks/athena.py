@@ -401,17 +401,13 @@ class AthenaHook(AwsBaseHook):
             params["ClientRequestToken"] = client_request_token
 
         if self.log_query:
-            self.log.info(
-                "Starting CalculationExecution with params:\n%s", query_params_to_string(params)
-            )
+            self.log.info("Starting CalculationExecution with params:\n%s", query_params_to_string(params))
         response = self.get_conn().start_calculation_execution(**params)
         calc_execution_id = response["CalculationExecutionId"]
         self.log.info("Calculation execution id: %s", calc_execution_id)
         return calc_execution_id
 
-    def get_calculation_info(
-        self, calculation_execution_id: str, use_cache: bool = False
-    ) -> dict[str, Any]:
+    def get_calculation_info(self, calculation_execution_id: str, use_cache: bool = False) -> dict[str, Any]:
         """
         Get information about a single execution of a calculation.
 
@@ -425,17 +421,13 @@ class AthenaHook(AwsBaseHook):
         if use_cache and cache_key in self.__query_results:
             return self.__query_results[cache_key]
 
-        response = self.get_conn().get_calculation_execution(
-            CalculationExecutionId=calculation_execution_id
-        )
+        response = self.get_conn().get_calculation_execution(CalculationExecutionId=calculation_execution_id)
 
         if use_cache:
             self.__query_results[cache_key] = response
         return response
 
-    def check_calculation_status(
-        self, calculation_execution_id: str, use_cache: bool = False
-    ) -> str | None:
+    def check_calculation_status(self, calculation_execution_id: str, use_cache: bool = False) -> str | None:
         """
         Fetch the state of a submitted calculation execution.
 
@@ -484,6 +476,4 @@ class AthenaHook(AwsBaseHook):
         :param calculation_execution_id: CalculationExecutionId returned by start_calculation
         """
         self.log.info("Stopping CalculationExecution with id - %s", calculation_execution_id)
-        return self.get_conn().stop_calculation_execution(
-            CalculationExecutionId=calculation_execution_id
-        )
+        return self.get_conn().stop_calculation_execution(CalculationExecutionId=calculation_execution_id)
