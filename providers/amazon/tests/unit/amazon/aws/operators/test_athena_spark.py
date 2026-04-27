@@ -20,119 +20,130 @@ from unittest import mock
 
 import pytest
 
-from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.athena import AthenaHook
-from airflow.providers.amazon.aws.operators.athena_spark import AthenaSparkOperator
+from airflow.providers.amazon.aws.operators.athena_spark import (
+    METADATA_KEY_CALCULATION_EXECUTION_ID,
+    METADATA_KEY_FINAL_STATE,
+    AthenaSparkOperator,
+)
+from airflow.providers.common.compat.sdk import AirflowException
+
+CALC_ID = "calc-exec-123"
+SESSION_ID = "session-456"
+CODE_BLOCK = "1 + 1"
+
+
+@pytest.fixture
+def operator():
+    return AthenaSparkOperator(
+        task_id="test_athena_spark",
+        session_id=SESSION_ID,
+        code_block=CODE_BLOCK,
+        poll_interval=0,
+        max_polling_attempts=5,
+    )
+
+
+@pytest.fixture
+def context():
+    return {"ti": None}
+
+
+def _exec_info(state: str, submission_time=None, completion_time=None):
+    return {
+        "Status": {
+            "State": state,
+            "SubmissionDateTime": submission_time,
+            "CompletionDateTime": completion_time,
+        }
+    }
 
 
 class TestAthenaSparkOperator:
-    @staticmethod
-    def _build_operator(**overrides):
-        kwargs = {
-            "task_id": "athena_spark_task",
-            "session_id": "session-123",
-            "code_block": "print('hello')",
-            "poll_interval": 1,
-            "max_poll_interval": 10,
-            "max_polling_attempts": 5,
-            "backoff_multiplier": 2.0,
-        }
-        kwargs.update(overrides)
-        return AthenaSparkOperator(**kwargs)
+    def test_init(self, operator):
+        assert operator.session_id == SESSION_ID
+        assert operator.code_block == CODE_BLOCK
+        assert operator.poll_interval == 0
+        assert operator.max_polling_attempts == 5
+        assert operator._calculation_execution_id is None
 
-    @staticmethod
-    def _build_context():
-        return {"ti": mock.MagicMock()}
+    def test_template_fields(self):
+        assert "session_id" in AthenaSparkOperator.template_fields
+        assert "code_block" in AthenaSparkOperator.template_fields
+        assert "description" in AthenaSparkOperator.template_fields
 
-    @mock.patch("airflow.providers.amazon.aws.operators.athena_spark.time.sleep")
-    @mock.patch.object(AthenaHook, "check_calculation_status", side_effect=["RUNNING", "COMPLETED"])
-    @mock.patch.object(AthenaHook, "start_calculation_execution", return_value="calc-1")
-    def test_execute_success(self, start_calc, _check_status, mock_sleep):
-        operator = self._build_operator()
-        context = self._build_context()
-
+    @mock.patch.object(AthenaHook, "get_calculation_info", return_value={})
+    @mock.patch.object(AthenaHook, "get_calculation_state_change_reason", return_value=None)
+    @mock.patch.object(AthenaHook, "check_calculation_status", return_value="COMPLETED")
+    @mock.patch.object(AthenaHook, "start_calculation", return_value=CALC_ID)
+    def test_execute_success_immediate_completed(
+        self, mock_start, mock_check, mock_reason, mock_info, operator, context
+    ):
+        mock_info.return_value = _exec_info("COMPLETED")
         result = operator.execute(context)
-
-        start_calc.assert_called_once_with(
-            session_id="session-123",
-            code_block="print('hello')",
-            workgroup="primary",
+        mock_start.assert_called_once_with(
+            session_id=SESSION_ID,
+            code_block=CODE_BLOCK,
             description=None,
-            calculation_configuration=None,
             client_request_token=None,
         )
-        assert result["calculation_execution_id"] == "calc-1"
-        assert result["final_state"] == "COMPLETED"
-        context["ti"].xcom_push.assert_any_call(key="calculation_execution_id", value="calc-1")
-        context["ti"].xcom_push.assert_any_call(key="athena_spark_metadata", value=result)
-        mock_sleep.assert_called_once_with(1.0)
+        assert result[METADATA_KEY_CALCULATION_EXECUTION_ID] == CALC_ID
+        assert result[METADATA_KEY_FINAL_STATE] == "COMPLETED"
 
-    @pytest.mark.parametrize("terminal_state", ["FAILED", "CANCELLED"])
-    @mock.patch.object(AthenaHook, "get_calculation_state_change_reason", return_value="bad state")
-    @mock.patch.object(AthenaHook, "start_calculation_execution", return_value="calc-1")
-    def test_execute_failure_states_raise(self, _start_calc, _reason, terminal_state):
-        operator = self._build_operator()
-        context = self._build_context()
+    @mock.patch.object(AthenaHook, "get_calculation_info", return_value={})
+    @mock.patch.object(AthenaHook, "get_calculation_state_change_reason", return_value="Job failed")
+    @mock.patch.object(AthenaHook, "check_calculation_status", return_value="FAILED")
+    @mock.patch.object(AthenaHook, "start_calculation", return_value=CALC_ID)
+    def test_execute_failure_raises(self, mock_start, mock_check, mock_reason, mock_info, operator, context):
+        mock_info.return_value = _exec_info("FAILED")
+        with pytest.raises(AirflowException, match="FAILED"):
+            operator.execute(context)
+        mock_reason.assert_called()
 
-        with (
-            mock.patch.object(AthenaHook, "check_calculation_status", return_value=terminal_state),
-            pytest.raises(AirflowException, match=f"state {terminal_state}"),
-        ):
+    @mock.patch.object(AthenaHook, "get_calculation_info", return_value={})
+    @mock.patch.object(AthenaHook, "get_calculation_state_change_reason", return_value="Canceled")
+    @mock.patch.object(AthenaHook, "check_calculation_status", return_value="CANCELED")
+    @mock.patch.object(AthenaHook, "start_calculation", return_value=CALC_ID)
+    def test_execute_cancelled_raises(
+        self, mock_start, mock_check, mock_reason, mock_info, operator, context
+    ):
+        mock_info.return_value = _exec_info("CANCELED")
+        with pytest.raises(AirflowException, match="CANCELED"):
             operator.execute(context)
 
+    @mock.patch.object(AthenaHook, "get_calculation_info", return_value={})
+    @mock.patch.object(AthenaHook, "get_calculation_state_change_reason", return_value=None)
+    @mock.patch.object(AthenaHook, "check_calculation_status", side_effect=["RUNNING", "COMPLETED"])
+    @mock.patch.object(AthenaHook, "start_calculation", return_value=CALC_ID)
+    def test_execute_poll_then_success(
+        self, mock_start, mock_check, mock_reason, mock_info, operator, context
+    ):
+        mock_info.return_value = _exec_info("COMPLETED")
+        result = operator.execute(context)
+        assert mock_check.call_count == 2
+        assert result[METADATA_KEY_FINAL_STATE] == "COMPLETED"
+
+    @mock.patch.object(AthenaHook, "check_calculation_status", return_value="RUNNING")
+    @mock.patch.object(AthenaHook, "start_calculation", return_value=CALC_ID)
+    def test_execute_poll_timeout(self, mock_start, mock_check, operator, context):
+        operator.max_polling_attempts = 2
+        with pytest.raises(AirflowException, match="timed out"):
+            operator.execute(context)
+        assert mock_check.call_count >= 2
+
     @mock.patch.object(AthenaHook, "check_calculation_status", return_value=None)
-    @mock.patch.object(AthenaHook, "start_calculation_execution", return_value="calc-1")
-    def test_execute_malformed_state_raises(self, _start_calc, _check_status):
-        operator = self._build_operator()
+    @mock.patch.object(AthenaHook, "start_calculation", return_value=CALC_ID)
+    def test_execute_malformed_status_raises(self, mock_start, mock_check, operator, context):
+        with pytest.raises(AirflowException, match="Malformed or missing status"):
+            operator.execute(context)
 
-        with pytest.raises(AirflowException, match="Unable to determine Athena Spark calculation state"):
-            operator.execute(self._build_context())
+    @mock.patch.object(AthenaHook, "stop_calculation")
+    def test_on_kill_calls_stop_calculation(self, mock_stop, operator):
+        operator._calculation_execution_id = CALC_ID
+        operator.on_kill()
+        mock_stop.assert_called_once_with(CALC_ID)
 
-    @mock.patch("airflow.providers.amazon.aws.operators.athena_spark.time.sleep")
-    @mock.patch.object(AthenaHook, "check_calculation_status", side_effect=["RUNNING", "RUNNING"])
-    @mock.patch.object(AthenaHook, "start_calculation_execution", return_value="calc-1")
-    def test_execute_running_until_max_attempts(self, _start_calc, _check_status, _sleep):
-        operator = self._build_operator(max_polling_attempts=2)
-
-        with pytest.raises(AirflowException, match="max_polling_attempts"):
-            operator.execute(self._build_context())
-
-    @mock.patch("airflow.providers.amazon.aws.operators.athena_spark.time.sleep")
-    @mock.patch.object(AthenaHook, "check_calculation_status", side_effect=["RUNNING", "RUNNING", "COMPLETED"])
-    @mock.patch.object(AthenaHook, "start_calculation_execution", return_value="calc-1")
-    def test_exponential_backoff(self, _start_calc, _check_status, mock_sleep):
-        operator = self._build_operator(poll_interval=1, max_poll_interval=3, backoff_multiplier=2)
-
-        result = operator.execute(self._build_context())
-
-        assert result["final_state"] == "COMPLETED"
-        assert mock_sleep.call_args_list == [mock.call(1.0), mock.call(2.0)]
-
-    @mock.patch.object(AthenaHook, "start_calculation_execution", return_value="calc-1")
-    def test_execute_without_waiting(self, _start_calc):
-        operator = self._build_operator(wait_for_completion=False)
-
-        result = operator.execute(self._build_context())
-
-        assert result == {
-            "calculation_execution_id": "calc-1",
-            "session_id": "session-123",
-            "workgroup": "primary",
-            "final_state": None,
-            "state_change_reason": None,
-        }
-
-    @pytest.mark.parametrize(
-        ("operator_kwargs", "message"),
-        [
-            ({"poll_interval": 0}, "poll_interval"),
-            ({"poll_interval": 10, "max_poll_interval": 5}, "max_poll_interval"),
-            ({"max_polling_attempts": 0}, "max_polling_attempts"),
-            ({"backoff_multiplier": 0.5}, "backoff_multiplier"),
-        ],
-    )
-    @mock.patch.object(AthenaHook, "start_calculation_execution", return_value="calc-1")
-    def test_execute_invalid_polling_configuration(self, _start_calc, operator_kwargs, message):
-        operator = self._build_operator(**operator_kwargs)
-        with pytest.raises(AirflowException, match=message):
-            operator.execute(self._build_context())
+    @mock.patch.object(AthenaHook, "stop_calculation")
+    def test_on_kill_no_op_when_no_calc_id(self, mock_stop, operator):
+        operator.on_kill()
+        mock_stop.assert_not_called()
