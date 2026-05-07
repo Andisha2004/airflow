@@ -33,12 +33,22 @@ from airflow.providers.common.compat.sdk import AirflowException
 if TYPE_CHECKING:
     from airflow.sdk import Context
 
-# Metadata keys returned by execute(); XCom schema is owned by Jack + Andisha (Task 8/9).
+# Metadata keys returned by execute() and pushed to XCom for the dashboard UI.
+ATHENA_SPARK_METADATA_XCOM_KEY = "athena_spark_metadata"
 METADATA_KEY_CALCULATION_EXECUTION_ID = "calculation_execution_id"
 METADATA_KEY_FINAL_STATE = "final_state"
+METADATA_KEY_STATUS = "status"
+METADATA_KEY_FAILURE_REASON = "failure_reason"
 METADATA_KEY_STATE_CHANGE_REASON = "state_change_reason"
 METADATA_KEY_SUBMISSION_TIME = "submission_time"
 METADATA_KEY_COMPLETION_TIME = "completion_time"
+METADATA_KEY_DAG_ID = "dag_id"
+METADATA_KEY_TASK_ID = "task_id"
+METADATA_KEY_RUN_ID = "run_id"
+METADATA_KEY_MAP_INDEX = "map_index"
+METADATA_KEY_SESSION_ID = "session_id"
+METADATA_KEY_WORKGROUP = "workgroup"
+METADATA_KEY_OUTPUT_LOCATION = "output_location"
 
 
 class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
@@ -47,7 +57,7 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
 
     Submits a calculation (e.g. PySpark code) via the Athena API, polls until
     the calculation reaches a terminal state (COMPLETED, FAILED, or CANCELED),
-    and returns execution metadata (XCom push is Jack's responsibility per Task 9).
+    returns execution metadata, and pushes dashboard-friendly metadata to XCom.
 
     .. seealso::
         - :class:`airflow.providers.amazon.aws.hooks.athena.AthenaHook`
@@ -188,14 +198,28 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
         )
         submission_time = status.get("SubmissionDateTime")
         completion_time = status.get("CompletionDateTime")
+        workgroup = (
+            execution_info.get("WorkGroup")
+            or (execution_info.get("CalculationExecution") or {}).get("WorkGroup")
+            or (execution_info.get("CalculationExecution") or {}).get("Workgroup")
+        )
+        output_location = (
+            execution_info.get("OutputLocation")
+            or (execution_info.get("CalculationExecution") or {}).get("OutputLocation")
+            or (execution_info.get("ResultConfiguration") or {}).get("OutputLocation")
+        )
 
-        metadata = {
-            METADATA_KEY_CALCULATION_EXECUTION_ID: calculation_execution_id,
-            METADATA_KEY_FINAL_STATE: state,
-            METADATA_KEY_STATE_CHANGE_REASON: reason,
-            METADATA_KEY_SUBMISSION_TIME: str(submission_time) if submission_time else None,
-            METADATA_KEY_COMPLETION_TIME: str(completion_time) if completion_time else None,
-        }
+        metadata = self._build_metadata(
+            context=context,
+            calculation_execution_id=calculation_execution_id,
+            state=state,
+            reason=reason,
+            submission_time=submission_time,
+            completion_time=completion_time,
+            workgroup=workgroup,
+            output_location=output_location,
+        )
+        self._push_metadata_to_xcom(context=context, metadata=metadata)
 
         if state in AthenaHook.SPARK_FAILURE_STATES:
             self.log.error(
@@ -221,8 +245,48 @@ class AthenaSparkOperator(AwsBaseOperator[AthenaHook]):
             calculation_execution_id,
         )
 
-        # Return metadata; XCom push is Jack's responsibility (Task 9).
         return metadata
+
+    def _build_metadata(
+        self,
+        *,
+        context: Context,
+        calculation_execution_id: str,
+        state: str,
+        reason: str | None,
+        submission_time: Any,
+        completion_time: Any,
+        workgroup: str | None,
+        output_location: str | None,
+    ) -> dict[str, Any]:
+        task_instance = context.get("ti")
+        return {
+            METADATA_KEY_DAG_ID: getattr(task_instance, "dag_id", None),
+            METADATA_KEY_TASK_ID: getattr(task_instance, "task_id", None),
+            METADATA_KEY_RUN_ID: getattr(task_instance, "run_id", None),
+            METADATA_KEY_MAP_INDEX: getattr(task_instance, "map_index", -1),
+            METADATA_KEY_CALCULATION_EXECUTION_ID: calculation_execution_id,
+            METADATA_KEY_STATUS: state,
+            METADATA_KEY_FINAL_STATE: state,
+            METADATA_KEY_FAILURE_REASON: reason,
+            METADATA_KEY_STATE_CHANGE_REASON: reason,
+            METADATA_KEY_SUBMISSION_TIME: str(submission_time) if submission_time else None,
+            METADATA_KEY_COMPLETION_TIME: str(completion_time) if completion_time else None,
+            METADATA_KEY_SESSION_ID: self.session_id,
+            METADATA_KEY_WORKGROUP: workgroup,
+            METADATA_KEY_OUTPUT_LOCATION: output_location,
+        }
+
+    def _push_metadata_to_xcom(self, *, context: Context, metadata: dict[str, Any]) -> None:
+        task_instance = context.get("ti")
+        if not task_instance:
+            return
+
+        task_instance.xcom_push(
+            key=METADATA_KEY_CALCULATION_EXECUTION_ID,
+            value=metadata[METADATA_KEY_CALCULATION_EXECUTION_ID],
+        )
+        task_instance.xcom_push(key=ATHENA_SPARK_METADATA_XCOM_KEY, value=metadata)
 
     def on_kill(self) -> None:
         """Request cancellation of the calculation when the task is killed."""

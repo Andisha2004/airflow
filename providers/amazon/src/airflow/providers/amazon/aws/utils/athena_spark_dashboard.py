@@ -18,16 +18,20 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, Mapping
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from airflow.models.taskinstance import TaskInstance
 from airflow.models.xcom import XComModel
 from airflow.utils.session import NEW_SESSION, provide_session
 
-ATHENA_SPARK_METADATA_KEY = "athena_spark_metadata"
+ATHENA_SPARK_XCOM_KEY = "athena_spark_metadata"
+# Backward-compatible alias. Update the constant above if the operator/sensor
+# use a different XCom key in the future.
+ATHENA_SPARK_METADATA_KEY = ATHENA_SPARK_XCOM_KEY
 
 # If your operator pushes Athena Spark metadata under a different XCom key,
 # update this constant to match the key used in `xcom_push(key=..., value=...)`.
@@ -75,11 +79,67 @@ def _coerce_metadata_mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
+def normalize_xcom_payload(
+    xcom_record: XComModel,
+    task_instance: TaskInstance | None = None,
+) -> dict[str, Any]:
+    """
+    Normalize one Athena Spark XCom record into a stable UI-friendly dictionary.
+
+    This is the main schema adapter for the dashboard. If the operator or sensor
+    changes the exact payload fields later, update the fallback key handling here
+    instead of changing the templates or route code.
+    """
+    if task_instance is None:
+        task_instance = SimpleNamespace(
+            dag_id=xcom_record.dag_id,
+            task_id=xcom_record.task_id,
+            run_id=xcom_record.run_id,
+            map_index=xcom_record.map_index,
+            state=None,
+            start_date=None,
+            end_date=None,
+        )
+    metadata = _coerce_metadata_mapping(xcom_record.value)
+    return _normalize_athena_spark_run_record(
+        xcom=xcom_record,
+        task_instance=task_instance,
+        metadata=metadata,
+    )
+
+
+def _latest_athena_spark_xcom_subquery(*, dag_id_filter: str | None = None):
+    stmt = (
+        select(
+            XComModel.dag_id.label("dag_id"),
+            XComModel.task_id.label("task_id"),
+            XComModel.run_id.label("run_id"),
+            XComModel.map_index.label("map_index"),
+            func.max(XComModel.timestamp).label("latest_timestamp"),
+        )
+        .where(XComModel.key == ATHENA_SPARK_XCOM_KEY)
+        .group_by(
+            XComModel.dag_id,
+            XComModel.task_id,
+            XComModel.run_id,
+            XComModel.map_index,
+        )
+    )
+    if dag_id_filter:
+        stmt = stmt.where(XComModel.dag_id == dag_id_filter)
+    return stmt.subquery()
+
+
 @provide_session
 def get_recent_athena_spark_runs(
-    *, limit: int = 50, dag_id: str | None = None, session: Session = NEW_SESSION
+    *,
+    limit: int = 50,
+    dag_id_filter: str | None = None,
+    status_filter: str | None = None,
+    session: Session = NEW_SESSION,
 ) -> list[dict[str, Any]]:
     """Return recent Athena Spark runs backed by XCom metadata and task instance data."""
+    latest_xcom = _latest_athena_spark_xcom_subquery(dag_id_filter=dag_id_filter)
     ti_join = and_(
         TaskInstance.dag_id == XComModel.dag_id,
         TaskInstance.task_id == XComModel.task_id,
@@ -89,22 +149,31 @@ def get_recent_athena_spark_runs(
 
     stmt = (
         select(XComModel, TaskInstance)
+        .join(
+            latest_xcom,
+            and_(
+                XComModel.dag_id == latest_xcom.c.dag_id,
+                XComModel.task_id == latest_xcom.c.task_id,
+                XComModel.run_id == latest_xcom.c.run_id,
+                XComModel.map_index == latest_xcom.c.map_index,
+                XComModel.timestamp == latest_xcom.c.latest_timestamp,
+            ),
+        )
         .join(TaskInstance, ti_join)
-        .where(XComModel.key == ATHENA_SPARK_METADATA_KEY)
         .order_by(XComModel.timestamp.desc())
         .limit(limit)
     )
-    if dag_id:
-        stmt = stmt.where(XComModel.dag_id == dag_id)
 
-    return [_xcom_and_ti_to_row(xcom=xcom, task_instance=task_instance) for xcom, task_instance in session.execute(stmt)]
+    rows = [normalize_xcom_payload(xcom, task_instance) for xcom, task_instance in session.execute(stmt)]
+    return _filter_runs_by_status(rows, status_filter=status_filter)
 
 
 @provide_session
-def get_athena_spark_run(
+def get_athena_spark_run_detail(
     *, dag_id: str, task_id: str, run_id: str, map_index: int, session: Session = NEW_SESSION
 ) -> dict[str, Any] | None:
     """Return one Athena Spark run by task instance identity."""
+    latest_xcom = _latest_athena_spark_xcom_subquery(dag_id_filter=dag_id)
     ti_join = and_(
         TaskInstance.dag_id == XComModel.dag_id,
         TaskInstance.task_id == XComModel.task_id,
@@ -113,9 +182,18 @@ def get_athena_spark_run(
     )
     stmt = (
         select(XComModel, TaskInstance)
+        .join(
+            latest_xcom,
+            and_(
+                XComModel.dag_id == latest_xcom.c.dag_id,
+                XComModel.task_id == latest_xcom.c.task_id,
+                XComModel.run_id == latest_xcom.c.run_id,
+                XComModel.map_index == latest_xcom.c.map_index,
+                XComModel.timestamp == latest_xcom.c.latest_timestamp,
+            ),
+        )
         .join(TaskInstance, ti_join)
         .where(
-            XComModel.key == ATHENA_SPARK_METADATA_KEY,
             XComModel.dag_id == dag_id,
             XComModel.task_id == task_id,
             XComModel.run_id == run_id,
@@ -128,12 +206,84 @@ def get_athena_spark_run(
     if not result:
         return None
     xcom, task_instance = result
-    return _xcom_and_ti_to_row(xcom=xcom, task_instance=task_instance)
+    return normalize_xcom_payload(xcom, task_instance)
 
 
-def _xcom_and_ti_to_row(*, xcom: XComModel, task_instance: TaskInstance) -> dict[str, Any]:
-    metadata = _coerce_metadata_mapping(xcom.value)
-    return _normalize_athena_spark_run_record(xcom=xcom, task_instance=task_instance, metadata=metadata)
+def get_athena_spark_run(
+    *, dag_id: str, task_id: str, run_id: str, map_index: int, session: Session = NEW_SESSION
+) -> dict[str, Any] | None:
+    """
+    Backward-compatible alias for older route code.
+
+    New code should call `get_athena_spark_run_detail()`.
+    """
+    return get_athena_spark_run_detail(
+        dag_id=dag_id,
+        task_id=task_id,
+        run_id=run_id,
+        map_index=map_index,
+        session=session,
+    )
+
+
+def compute_dashboard_summary(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts = {
+        "ALL": len(runs),
+        "FAILED": 0,
+        "QUEUED": 0,
+        "RUNNING": 0,
+        "SUCCESS": 0,
+        "REQUIRED_ACTION": 0,
+    }
+    for row in runs:
+        status = str(row.get("status") or "UNKNOWN").upper()
+        if status in counts and status != "ALL":
+            counts[status] += 1
+
+    return [
+        {
+            "key": "ALL",
+            "label": "All",
+            "count": counts["ALL"],
+            "tone": "all",
+            "icon": "●",
+        },
+        {
+            "key": "FAILED",
+            "label": "Failed",
+            "count": counts["FAILED"],
+            "tone": "failed",
+            "icon": "✕",
+        },
+        {
+            "key": "QUEUED",
+            "label": "Queued",
+            "count": counts["QUEUED"],
+            "tone": "queued",
+            "icon": "◌",
+        },
+        {
+            "key": "RUNNING",
+            "label": "Running",
+            "count": counts["RUNNING"],
+            "tone": "running",
+            "icon": "↻",
+        },
+        {
+            "key": "SUCCESS",
+            "label": "Success",
+            "count": counts["SUCCESS"],
+            "tone": "success",
+            "icon": "✓",
+        },
+        {
+            "key": "REQUIRED_ACTION",
+            "label": "Required Actions",
+            "count": counts["REQUIRED_ACTION"],
+            "tone": "required-action",
+            "icon": "!",
+        },
+    ]
 
 
 def _normalize_athena_spark_run_record(
@@ -162,6 +312,9 @@ def _normalize_athena_spark_run_record(
     ended_at = _first_metadata_value(metadata, "completion_time", "end_time") or task_instance.end_date
     duration = _duration_seconds(started_at=started_at, ended_at=ended_at)
     output_location = _first_metadata_value(metadata, "output_location", "result_output_location", "s3_output")
+    normalized_status = _normalize_status(
+        _first_metadata_value(metadata, "status", "state", "final_state") or task_instance.state
+    )
 
     return {
         "dag_id": _first_metadata_value(metadata, "dag_id") or xcom.dag_id,
@@ -169,7 +322,7 @@ def _normalize_athena_spark_run_record(
         "run_id": _first_metadata_value(metadata, "run_id") or xcom.run_id,
         "map_index": xcom.map_index,
         "calculation_execution_id": _first_metadata_value(metadata, "calculation_execution_id"),
-        "status": _first_metadata_value(metadata, "status", "final_state") or task_instance.state,
+        "status": normalized_status,
         "workgroup": _first_metadata_value(metadata, "workgroup"),
         "session_id": _first_metadata_value(metadata, "session_id"),
         "failure_reason": _first_metadata_value(metadata, "failure_reason", "state_change_reason"),
@@ -189,3 +342,29 @@ def _duration_seconds(*, started_at: datetime | None, ended_at: datetime | None)
     if not started_at or not ended_at:
         return None
     return (ended_at - started_at).total_seconds()
+
+
+def _normalize_status(status: Any) -> str:
+    raw_status = str(status or "UNKNOWN").upper()
+    if raw_status in {"SUCCEEDED", "SUCCESS", "COMPLETED"}:
+        return "SUCCESS"
+    if raw_status in {"FAILED", "FAILURE", "CANCELED", "CANCELLED"}:
+        return "FAILED"
+    if raw_status in {"RUNNING", "STARTING", "CREATING", "CREATED"}:
+        return "RUNNING"
+    if raw_status in {"QUEUED", "PENDING"}:
+        return "QUEUED"
+    if raw_status == "REQUIRED_ACTION":
+        return "REQUIRED_ACTION"
+    return raw_status
+
+
+def _filter_runs_by_status(
+    runs: list[dict[str, Any]],
+    *,
+    status_filter: str | None,
+) -> list[dict[str, Any]]:
+    normalized_filter = _normalize_status(status_filter)
+    if not normalized_filter or normalized_filter == "ALL" or normalized_filter == "UNKNOWN":
+        return runs
+    return [row for row in runs if str(row.get("status") or "UNKNOWN").upper() == normalized_filter]

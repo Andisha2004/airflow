@@ -22,7 +22,6 @@ Test strategy:
 - Cover success, failure (exceptions), and bad/edge-case input for each hook method.
 - Use botocore.exceptions.ClientError for API failure scenarios.
 """
-
 from __future__ import annotations
 
 from unittest import mock
@@ -73,8 +72,8 @@ MOCK_QUERY_EXECUTION_OUTPUT = {
 }
 MOCK_CALCULATION_EXECUTION = {"CalculationExecutionId": MOCK_DATA["calculation_execution_id"]}
 
-MOCK_RUNNING_CALC_EXECUTION = {"CalculationExecution": {"Status": {"State": "RUNNING"}}}
-MOCK_SUCCEEDED_CALC_EXECUTION = {"CalculationExecution": {"Status": {"State": "COMPLETED"}}}
+MOCK_RUNNING_CALC_EXECUTION = {"Status": {"State": "RUNNING"}}
+MOCK_SUCCEEDED_CALC_EXECUTION = {"Status": {"State": "COMPLETED"}}
 
 
 @mock_aws
@@ -172,13 +171,14 @@ class TestAthenaHook:
         assert call_kw["sql"] == MOCK_DATA["query"]
         assert call_kw["job_id"] == MOCK_DATA["query_execution_id"]
 
-    # new test cases
+    # new test cases 
     @mock.patch.object(AthenaHook, "get_conn")
     def test_hook_start_calculation_default_params(self, mock_conn):
         mock_conn.return_value.start_calculation_execution.return_value = MOCK_CALCULATION_EXECUTION
 
         result = self.athena.start_calculation(
-            session_id=MOCK_DATA["session_id"], code_block=MOCK_DATA["code_block"]
+            session_id=MOCK_DATA["session_id"],
+            code_block=MOCK_DATA["code_block"],
         )
 
         expected_call_params = {
@@ -216,9 +216,7 @@ class TestAthenaHook:
     def test_hook_get_calculation_info(self, mock_conn):
         mock_conn.return_value.get_calculation_execution.return_value = MOCK_SUCCEEDED_CALC_EXECUTION
 
-        result = self.athena.get_calculation_info(
-            calculation_execution_id=MOCK_DATA["calculation_execution_id"]
-        )
+        result = self.athena.get_calculation_info(calculation_execution_id=MOCK_DATA["calculation_execution_id"])
 
         mock_conn.return_value.get_calculation_execution.assert_called_once_with(
             CalculationExecutionId=MOCK_DATA["calculation_execution_id"]
@@ -229,9 +227,7 @@ class TestAthenaHook:
     def test_check_calculation_status_normal(self, mock_conn):
         mock_conn.return_value.get_calculation_execution.return_value = MOCK_RUNNING_CALC_EXECUTION
 
-        state = self.athena.check_calculation_status(
-            calculation_execution_id=MOCK_DATA["calculation_execution_id"]
-        )
+        state = self.athena.check_calculation_status(calculation_execution_id=MOCK_DATA["calculation_execution_id"])
 
         assert state == "RUNNING"
 
@@ -377,9 +373,7 @@ class TestAthenaHook:
     def test_hook_stop_query_boto3_failure(self, mock_conn):
         """Failure case: boto3 stop_query_execution raises ClientError."""
         mock_conn.return_value.stop_query_execution.side_effect = ClientError(
-            error_response={
-                "Error": {"Code": "InvalidRequestException", "Message": "Query already finished"}
-            },
+            error_response={"Error": {"Code": "InvalidRequestException", "Message": "Query already finished"}},
             operation_name="stop_query_execution",
         )
         with pytest.raises(ClientError) as exc_info:

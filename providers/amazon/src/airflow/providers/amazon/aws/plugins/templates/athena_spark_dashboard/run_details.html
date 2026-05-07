@@ -133,8 +133,8 @@
         }
 
         .badge-running {
-            background: #dbeafe;
-            color: #1d4ed8;
+            background: #ccfbf1;
+            color: #0f766e;
         }
 
         .badge-failed {
@@ -142,14 +142,43 @@
             color: #b91c1c;
         }
 
-        .badge-cancelled {
-            background: #fef3c7;
-            color: #92400e;
+        .badge-queued {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .badge-required-action {
+            background: #ede9fe;
+            color: #7c3aed;
         }
 
         .badge-default {
             background: #e5e7eb;
             color: #374151;
+        }
+
+        .hero-card {
+            margin-bottom: 18px;
+            padding: 18px 20px;
+            border: 1px solid #dbe3ec;
+            border-radius: 12px;
+            background: #ffffff;
+        }
+
+        .hero-title {
+            margin: 0 0 8px;
+            font-size: 14px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-weight: 700;
+        }
+
+        .hero-value {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 700;
+            word-break: break-word;
         }
 
         .debug-block {
@@ -176,6 +205,17 @@
         .empty-state p {
             margin: 0;
             color: #4b5563;
+        }
+
+        details {
+            padding: 0;
+        }
+
+        summary {
+            cursor: pointer;
+            padding: 12px 16px;
+            font-weight: 700;
+            color: #0f172a;
         }
     </style>
 </head>
@@ -211,18 +251,29 @@
     </div>
     {% endif %}
 
+    <div class="hero-card">
+        <p class="hero-title">CalculationExecutionId</p>
+        <p class="hero-value">{{ identifier_rows[4][1] if identifier_rows|length > 4 else "-" }}</p>
+    </div>
+
     <div class="panel">
         <div class="panel-header">
             Execution Status
             <span
                 class="badge
-                {% if status_ns.value in ['COMPLETED', 'SUCCEEDED', 'SUCCESS'] %}badge-success
-                {% elif status_ns.value in ['RUNNING', 'QUEUED', 'PENDING', 'STARTING'] %}badge-running
+                {% if status_ns.value == 'SUCCESS' %}badge-success
+                {% elif status_ns.value == 'RUNNING' %}badge-running
                 {% elif status_ns.value == 'FAILED' %}badge-failed
-                {% elif status_ns.value == 'CANCELLED' %}badge-cancelled
+                {% elif status_ns.value == 'QUEUED' %}badge-queued
+                {% elif status_ns.value == 'REQUIRED_ACTION' %}badge-required-action
                 {% else %}badge-default{% endif %}"
                 style="margin-left: 8px;"
             >
+                {% if status_ns.value == 'SUCCESS' %}✓
+                {% elif status_ns.value == 'FAILED' %}✕
+                {% elif status_ns.value == 'RUNNING' %}↻
+                {% elif status_ns.value == 'QUEUED' %}◌
+                {% elif status_ns.value == 'REQUIRED_ACTION' %}!{% endif %}
                 {{ status_ns.value or "UNKNOWN" }}
             </span>
         </div>
@@ -273,8 +324,10 @@
     </div>
 
     <div class="panel">
-        <div class="panel-header">Raw Metadata / Debug JSON</div>
-        <pre class="debug-block">{{ metadata_json }}</pre>
+        <details>
+            <summary>Raw Metadata / Debug JSON</summary>
+            <pre class="debug-block">{{ metadata_json }}</pre>
+        </details>
     </div>
     {% endif %}
 </body>
