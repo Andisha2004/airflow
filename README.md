@@ -53,6 +53,9 @@ We have built a native Airflow UI plugin to monitor your Spark calculations with
 
 * **Run Details Page:** Click on any specific run to view an in-depth breakdown. The sample image below shows the details of a demo Spark job that finds the class average score. This is highly useful for debugging and includes:
     * Status and identifiers.
+      * **RUNNING:** The Spark job is currently executing or waiting for AWS resources.
+      * **SUCCESS:** The calculation succeeded and output is ready in S3.
+      * **FAILED:** The job was terminated or encountered an error.
     * Failure reasons (gracefully handled with fallback text if empty).
     * Raw metadata payloads.
 
