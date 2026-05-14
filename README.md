@@ -80,7 +80,19 @@ This section is for future developers, reviewers, and maintainers who will suppo
     *   **Athena Spark APIs:** Receives instructions from the AthenaHook to provision and execute the Spark calculations.
     *   **S3 Output Storage:** The destination where the Athena Spark APIs write the final calculation results and execution outputs.
 
-### 2. Test Facilities & Results
+### 2. Reproducing the Dashboard Locally
+
+Procedure: 
+1. Start the Breeze webserver: `breeze start-airflow`
+2. Ensure `athena_spark_dashboard.py` is in the `plugins/` directory.
+3. Access the local UI at `localhost:28080`.
+4. Trigger the `seed_dag` to populate the dashboard without requiring AWS access.
+
+Extending the Dashboard:
+* **Adding new data fields:** Update the normalization helper in `athena_spark_dashboard.py` to extract the new key from the XCom payload. *Always provide fallback text (e.g., `N/A`) in case older runs lack the new field.*
+* **Modifying the UI:** Edit the Jinja templates. Do not change the base XCom payload structure in the Operator without also updating the dashboard's normalization helper, or the UI will crash when reading old runs.
+
+### 3. Test Facilities & Results
 We maintain high test coverage across the backend components to prevent regressions. 
 
 **Running Tests:**
