@@ -9,7 +9,7 @@
 **Project:** Support for AthenaSparkOperator inside Apache Airflow natively  
 **Client:** Apache Airflow Community and TA, Junkai Huang  
 **Team Members:** Danish Safdariyan, Andisha Safdariyan, Jack Zhou  
-**Demo Video:** https://youtu.be/L4dKWVUXO5U
+**Demo Video:** [https://youtu.be/L4dKWVUXO5U](https://www.youtube.com/watch?v=DOLWuQM1YrE)
 
 ## Table of Contents
 1. [Project Overview](#project-overview)
