@@ -9,7 +9,7 @@
 **Project:** Support for AthenaSparkOperator inside Apache Airflow natively  
 **Client:** Apache Airflow Community and TA, Junkai Huang  
 **Team Members:** Danish Safdariyan, Andisha Safdariyan, Jack Zhou  
-**Demo Video:** [@TODO Insert final video link here]  
+**Demo Video:** https://youtu.be/L4dKWVUXO5U
 
 ## Table of Contents
 1. [Project Overview](#project-overview)
@@ -100,7 +100,7 @@ We maintain high test coverage across the backend components to prevent regressi
 
 **Running Tests:**
 1. Start your Breeze environment: `breeze`
-2. Run unit tests for specific files using pytest: [@TODO: add specific commands that we used to achieve our test coverage - this sample test command below is incorrect] `pytest tests/providers/amazon/aws/operators/test_athena_spark.py`
+2. Run unit tests for specific files using pytest: `pytest tests/providers/amazon/aws/operators/test_athena_spark.py`
 
 **Current Coverage MetricResults:**
 * `athena.py` (Hook): **91%**
